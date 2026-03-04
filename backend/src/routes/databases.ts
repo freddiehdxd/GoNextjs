@@ -112,7 +112,7 @@ router.delete('/:name', async (req: Request, res: Response) => {
   );
   await runAdminSql(`DROP DATABASE IF EXISTS "${name}"`);
 
-  try { await panelQuery(`DROP USER IF EXISTS "${db.db_user}"`); } catch { /* best effort */ }
+  try { await panelQuery(`DROP USER IF EXISTS "${db.db_user}"`) ; } catch { /* best effort */ }
 
   await panelQuery('DELETE FROM managed_databases WHERE name = $1', [name]);
 

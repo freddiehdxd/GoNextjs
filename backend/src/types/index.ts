@@ -15,7 +15,7 @@ export interface App {
 export interface Database {
   id: string;
   name: string;
-  user: string;
+  db_user: string;
   password: string;
   created_at: string;
 }
