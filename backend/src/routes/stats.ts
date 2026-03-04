@@ -21,7 +21,7 @@ function cpuUsage(): Promise<number> {
         total += currTotal - prevTotal;
       });
       resolve(Math.round((1 - idle / total) * 100));
-    }, 500);
+    }, 1000);
   });
 }
 
