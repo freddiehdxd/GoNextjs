@@ -28,19 +28,23 @@ router.post('/', async (req: Request, res: Response) => {
     await removeNginxConfig(app.domain);
   }
 
-  await writeNginxConfig(domain, app.port, app.ssl_enabled);
+  // Always write HTTP-only config when adding/changing a domain.
+  // SSL must be explicitly issued afterwards via the SSL page.
+  // This prevents redirect loops when no cert exists yet.
+  await writeNginxConfig(domain, app.port, false);
   const reload = await testAndReloadNginx();
 
   if (!reload.success) {
-    // Roll back config
-    if (app.domain) await writeNginxConfig(app.domain, app.port, app.ssl_enabled);
+    // Roll back — restore old config if there was one
+    if (app.domain) await writeNginxConfig(app.domain, app.port, false);
     else await removeNginxConfig(domain);
     res.status(500).json({ success: false, error: reload.message });
     return;
   }
 
+  // Reset ssl_enabled to false since the domain changed and cert needs re-issuing
   const [updated] = await query<App>(
-    'UPDATE apps SET domain = $1, updated_at = NOW() WHERE name = $2 RETURNING *',
+    'UPDATE apps SET domain = $1, ssl_enabled = false, updated_at = NOW() WHERE name = $2 RETURNING *',
     [domain, app_name]
   );
 
@@ -55,7 +59,7 @@ router.delete('/:domain', async (req: Request, res: Response) => {
   await testAndReloadNginx();
 
   await query(
-    "UPDATE apps SET domain = NULL, ssl_enabled = false, updated_at = NOW() WHERE domain = $1",
+    'UPDATE apps SET domain = NULL, ssl_enabled = false, updated_at = NOW() WHERE domain = $1',
     [domain]
   );
 
