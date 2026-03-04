@@ -101,19 +101,65 @@ pm2 start "${PANEL_DIR}/frontend/node_modules/.bin/next" \
 
 pm2 save
 
+# ── NGINX config for panel (IP-based, no domain needed) ───────────────────
+echo "[panel] Writing NGINX config for panel..."
+
+# Detect server public IP
+SERVER_IP="$(curl -fsSL https://api.ipify.org || hostname -I | awk '{print $1}')"
+
+cat > /etc/nginx/sites-available/panel <<NGINXCONF
+# Panel control panel — accessible via server IP on port 80
+# Managed by setup_panel.sh
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    client_max_body_size 100M;
+
+    # Forward all traffic to the Next.js frontend (port 3000)
+    location / {
+        proxy_pass         http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection 'upgrade';
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+NGINXCONF
+
+ln -sf /etc/nginx/sites-available/panel /etc/nginx/sites-enabled/panel
+
+# Remove default NGINX site if still present
+rm -f /etc/nginx/sites-enabled/default
+
+nginx -t && nginx -s reload
+
+# ── UFW firewall ───────────────────────────────────────────────────────────
+echo "[panel] Configuring firewall..."
+ufw allow OpenSSH   >/dev/null
+ufw allow 'Nginx Full' >/dev/null   # ports 80 + 443
+ufw --force enable  >/dev/null
+
 echo ""
 echo "========================================"
 echo "  Panel is running!"
-echo "  Frontend: http://localhost:3000"
-echo "  Backend:  http://127.0.0.1:4000"
+echo ""
+echo "  Access at: http://${SERVER_IP}"
 echo ""
 echo "  Default credentials:"
 echo "    Username: admin"
 echo "    Password: changeme"
 echo ""
-echo "  CHANGE the password in backend/.env"
-echo "  (set ADMIN_PASSWORD_HASH to a bcrypt hash)"
+echo "  IMPORTANT: Change the password!"
+echo "  Edit /opt/panel/backend/.env"
+echo "  Set ADMIN_PASSWORD_HASH to a bcrypt hash"
+echo "  Then: pm2 restart panel-backend"
 echo ""
-echo "  DB password: ${PANEL_DB_PASS}"
-echo "  JWT secret:  (saved to backend/.env)"
+echo "  DB password saved to: /opt/panel/backend/.env"
 echo "========================================"

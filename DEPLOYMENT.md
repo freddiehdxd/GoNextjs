@@ -2,142 +2,75 @@
 
 ## Requirements
 
-- Ubuntu 22.04 or 24.04 (fresh VPS recommended)
-- Root / sudo access
-- A domain pointing to the server's IP (for SSL)
+- Ubuntu 22.04 or 24.04 (fresh VPS, root access)
 - Ports 80 and 443 open in your firewall
+- A domain is **not required** — you can access the panel via the server IP
 
 ---
 
 ## Quick Install
 
 ```bash
-# 1. Clone the panel repo to your server
+# SSH into your VPS as root, then:
 git clone https://github.com/freddiehdxd/panel.git /opt/panel
-
-# 2. Run the setup script (as root)
-cd /opt/panel
-bash scripts/setup_panel.sh
+bash /opt/panel/scripts/setup_panel.sh
 ```
 
-The script installs and configures:
+The script installs and configures everything automatically:
 - Node.js LTS
 - PM2 (process manager)
-- NGINX
+- NGINX (with IP-based panel access on port 80)
 - PostgreSQL
 - Redis
+- UFW firewall (SSH + HTTP/HTTPS allowed)
 - The panel backend + frontend
 
----
-
-## Exposing the Panel via NGINX
-
-After installation, add the panel's own NGINX config so you can reach it at a domain:
-
-```bash
-# Copy the example config
-cp /opt/panel/nginx-templates/panel.conf.example \
-   /etc/nginx/sites-available/panel.example.com
-
-# Edit and replace panel.example.com with your actual domain
-nano /etc/nginx/sites-available/panel.example.com
-
-# Enable it
-ln -s /etc/nginx/sites-available/panel.example.com \
-      /etc/nginx/sites-enabled/panel.example.com
-
-# Test and reload
-nginx -t && nginx -s reload
-```
-
-Then issue an SSL certificate for the panel itself:
-
-```bash
-certbot --nginx -d panel.example.com --email you@example.com --agree-tos --non-interactive
-```
+When it finishes it prints your server IP. Open `http://YOUR_IP` in a browser and log in.
 
 ---
 
-## Securing the Admin Password
+## Default Login
 
-The default password is `changeme`. Generate a bcrypt hash and set it in `.env`:
+| Field    | Value      |
+|----------|------------|
+| Username | `admin`    |
+| Password | `changeme` |
+
+**Change the password immediately after first login** (see below).
+
+---
+
+## Adding Domains to Hosted Apps
+
+The panel runs on port 80 via IP. When you deploy apps and assign domains, the
+panel writes per-domain NGINX configs that sit alongside the panel config — they
+do not conflict because each config listens on a specific `server_name`.
+
+Flow:
+1. Deploy an app via **Apps → New App**
+2. Go to **Domains → Add Domain** and enter the domain for that app
+3. Point the domain's DNS A record at the VPS IP
+4. Go to **SSL → Issue SSL** to get a Let's Encrypt certificate
+
+NGINX configs are written to `/etc/nginx/sites-available/<domain>` and
+symlinked to `/etc/nginx/sites-enabled/<domain>` automatically.
+
+---
+
+## Changing the Admin Password
 
 ```bash
-# Generate hash (Node.js one-liner)
+# Generate a bcrypt hash of your new password
 node -e "const b=require('bcryptjs'); b.hash('YourNewPassword', 12).then(console.log)"
 
-# Edit backend/.env
+# Edit the backend env file
 nano /opt/panel/backend/.env
-# Set: ADMIN_PASSWORD_HASH=<the hash above>
-# Remove or comment out: ADMIN_PASSWORD
+# Add:    ADMIN_PASSWORD_HASH=<paste hash here>
+# Remove: ADMIN_PASSWORD=changeme
 
-# Rebuild and restart backend
+# Rebuild and restart
 cd /opt/panel/backend && npm run build
 pm2 restart panel-backend
-```
-
----
-
-## Firewall Setup (UFW)
-
-```bash
-ufw allow OpenSSH
-ufw allow 'Nginx Full'   # ports 80 + 443
-ufw enable
-```
-
-The backend API (port 4000) should **not** be opened — it only listens on `127.0.0.1` and is accessed via Next.js rewrites.
-
----
-
-## Deploying Your First Next.js App
-
-1. Open the panel in your browser
-2. Go to **Apps** → **New App**
-3. Enter app name, Git repository URL, and branch
-4. Add any environment variables your app needs
-5. Click **Deploy**
-
-The panel will:
-- Clone your repo to `/var/www/apps/<name>`
-- Run `npm ci && npm run build`
-- Start the app with PM2 on an auto-assigned port
-
-Then:
-6. Go to **Domains** → **Add Domain** → enter your domain
-7. Go to **SSL** → click **Issue SSL** for that domain
-
----
-
-## Directory Structure
-
-```
-/opt/panel/
-  backend/          Node.js API (Express + TypeScript)
-  frontend/         Next.js admin UI
-  scripts/          Bash automation scripts
-
-/var/www/apps/
-  <app-name>/       Each deployed Next.js app
-
-/etc/nginx/
-  sites-available/  NGINX configs (one per domain)
-  sites-enabled/    Symlinks to active configs
-
-/var/log/panel/     Panel + PM2 application logs
-```
-
----
-
-## PM2 Commands
-
-```bash
-pm2 list                    # show all processes
-pm2 logs panel-backend      # backend logs
-pm2 logs <app-name>         # app logs
-pm2 restart <app-name>      # restart app
-pm2 stop <app-name>         # stop app
-pm2 delete <app-name>       # remove from PM2
 ```
 
 ---
@@ -159,28 +92,75 @@ pm2 restart panel-frontend
 
 ---
 
+## Directory Structure
+
+```
+/opt/panel/
+  backend/          Node.js API (Express + TypeScript)
+  frontend/         Next.js admin UI
+  scripts/          Bash automation scripts
+
+/var/www/apps/
+  <app-name>/       Each deployed Next.js app
+
+/etc/nginx/
+  sites-available/  NGINX configs (panel + one per app domain)
+  sites-enabled/    Symlinks to active configs
+
+/var/log/panel/     Panel + PM2 application logs
+```
+
+---
+
+## PM2 Commands
+
+```bash
+pm2 list                    # show all processes
+pm2 logs panel-backend      # backend logs
+pm2 logs panel-frontend     # frontend logs
+pm2 logs <app-name>         # app logs
+pm2 restart <app-name>      # restart app
+pm2 stop <app-name>         # stop app
+pm2 delete <app-name>       # remove from PM2
+```
+
+---
+
+## Firewall
+
+The setup script enables UFW automatically:
+- SSH (port 22) — allowed
+- HTTP (port 80) — allowed
+- HTTPS (port 443) — allowed
+- Everything else — blocked
+
+The backend API (port 4000) is **not** exposed — it only listens on
+`127.0.0.1` and is proxied internally by Next.js.
+
+---
+
 ## Environment Variables Reference
 
-### `backend/.env`
+### `/opt/panel/backend/.env`
 
-| Variable             | Description                                    |
-|----------------------|------------------------------------------------|
-| `PORT`               | Backend API port (default: 4000)               |
-| `JWT_SECRET`         | Secret for signing JWTs — keep this private    |
-| `ADMIN_USERNAME`     | Panel admin username                           |
-| `ADMIN_PASSWORD`     | Plain password (dev only)                      |
-| `ADMIN_PASSWORD_HASH`| bcrypt hash — use this in production           |
-| `DATABASE_URL`       | PostgreSQL connection string for panel's own DB|
-| `APPS_DIR`           | Where apps are stored (default: /var/www/apps) |
-| `NGINX_AVAILABLE`    | NGINX sites-available path                     |
-| `NGINX_ENABLED`      | NGINX sites-enabled path                       |
-| `SCRIPTS_DIR`        | Path to panel scripts directory                |
-| `APP_PORT_START`     | Start of port range for hosted apps            |
-| `APP_PORT_END`       | End of port range for hosted apps              |
-| `PANEL_ORIGIN`       | Frontend URL for CORS (e.g. https://panel.example.com) |
+| Variable              | Description                                     |
+|-----------------------|-------------------------------------------------|
+| `PORT`                | Backend API port (default: 4000)                |
+| `JWT_SECRET`          | Secret for signing JWTs — keep this private     |
+| `ADMIN_USERNAME`      | Panel admin username                            |
+| `ADMIN_PASSWORD`      | Plain password (remove after setting hash)      |
+| `ADMIN_PASSWORD_HASH` | bcrypt hash — use this in production            |
+| `DATABASE_URL`        | PostgreSQL connection string for panel metadata |
+| `APPS_DIR`            | Where apps are stored (default: /var/www/apps)  |
+| `NGINX_AVAILABLE`     | NGINX sites-available path                      |
+| `NGINX_ENABLED`       | NGINX sites-enabled path                        |
+| `SCRIPTS_DIR`         | Path to panel scripts directory                 |
+| `APP_PORT_START`      | Start of port range for hosted apps (3001)      |
+| `APP_PORT_END`        | End of port range for hosted apps (3999)        |
+| `PANEL_ORIGIN`        | Frontend URL for CORS                           |
 
-### `frontend/.env.local`
+### `/opt/panel/frontend/.env.local`
 
-| Variable       | Description                                  |
-|----------------|----------------------------------------------|
-| `BACKEND_URL`  | Backend URL for Next.js rewrites (internal)  |
+| Variable      | Description                                 |
+|---------------|---------------------------------------------|
+| `BACKEND_URL` | Backend URL for Next.js rewrites (internal) |
