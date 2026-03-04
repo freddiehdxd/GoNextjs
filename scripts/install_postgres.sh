@@ -35,7 +35,10 @@ sudo -u postgres psql -v ON_ERROR_STOP=1 <<-SQL
   DO \$\$
   BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${PANEL_DB_USER}') THEN
-      CREATE ROLE "${PANEL_DB_USER}" LOGIN PASSWORD '${PANEL_DB_PASS}';
+      -- SUPERUSER so paneluser can CREATE/DROP databases and roles via TCP
+      CREATE ROLE "${PANEL_DB_USER}" LOGIN SUPERUSER PASSWORD '${PANEL_DB_PASS}';
+    ELSE
+      ALTER ROLE "${PANEL_DB_USER}" SUPERUSER;
     END IF;
   END
   \$\$;

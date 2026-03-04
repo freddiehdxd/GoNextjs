@@ -1,19 +1,28 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import { query as panelQuery } from '../services/db';
-import { runBin, validatePgIdentifier } from '../services/executor';
+import { query as panelQuery, pool } from '../services/db';
+import { validatePgIdentifier } from '../services/executor';
 import { Database } from '../types';
 
 const router = Router();
 
-const PG_SUPERUSER = process.env.PG_SUPERUSER ?? 'postgres';
-
-async function runPsql(sql: string): Promise<{ success: boolean; message: string }> {
-  const result = await runBin('psql', [
-    '-U', PG_SUPERUSER,
-    '-c', sql,
-  ]);
-  return { success: result.code === 0, message: result.stderr || result.stdout };
+/**
+ * Run a SQL statement that cannot be run inside a transaction
+ * (CREATE DATABASE, DROP DATABASE) using a direct pool connection.
+ */
+async function runAdminSql(sql: string): Promise<{ success: boolean; message: string }> {
+  const client = await pool.connect();
+  try {
+    // Must be outside a transaction block for CREATE/DROP DATABASE
+    await client.query('COMMIT');
+    await client.query(sql);
+    return { success: true, message: '' };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, message };
+  } finally {
+    client.release();
+  }
 }
 
 // GET /api/databases
@@ -40,7 +49,10 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  const existing = await panelQuery('SELECT id FROM managed_databases WHERE name = $1 OR db_user = $2', [name, user]);
+  const existing = await panelQuery(
+    'SELECT id FROM managed_databases WHERE name = $1 OR db_user = $2',
+    [name, user]
+  );
   if (existing.length > 0) {
     res.status(409).json({ success: false, error: 'Database or user already exists' });
     return;
@@ -48,16 +60,23 @@ router.post('/', async (req: Request, res: Response) => {
 
   const password = crypto.randomBytes(16).toString('hex');
 
-  const createUser = await runPsql(`CREATE USER "${user}" WITH PASSWORD '${password}'`);
-  if (!createUser.success) {
-    res.status(500).json({ success: false, error: createUser.message });
+  // Create role via parameterised query (safe — identifiers already validated)
+  try {
+    await panelQuery(
+      `CREATE USER "${user}" WITH PASSWORD '${password}'`
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: `Failed to create user: ${message}` });
     return;
   }
 
-  const createDb = await runPsql(`CREATE DATABASE "${name}" OWNER "${user}"`);
+  // CREATE DATABASE must run outside a transaction
+  const createDb = await runAdminSql(`CREATE DATABASE "${name}" OWNER "${user}"`);
   if (!createDb.success) {
-    await runPsql(`DROP USER IF EXISTS "${user}"`);
-    res.status(500).json({ success: false, error: createDb.message });
+    // Roll back user creation
+    try { await panelQuery(`DROP USER IF EXISTS "${user}"`); } catch { /* best effort */ }
+    res.status(500).json({ success: false, error: `Failed to create database: ${createDb.message}` });
     return;
   }
 
@@ -81,11 +100,20 @@ router.delete('/:name', async (req: Request, res: Response) => {
     return;
   }
 
-  const [db] = await panelQuery<Database>('SELECT * FROM managed_databases WHERE name = $1', [name]);
+  const [db] = await panelQuery<Database>(
+    'SELECT * FROM managed_databases WHERE name = $1',
+    [name]
+  );
   if (!db) { res.status(404).json({ success: false, error: 'Database not found' }); return; }
 
-  await runPsql(`DROP DATABASE IF EXISTS "${name}"`);
-  await runPsql(`DROP USER IF EXISTS "${db.user}"`);
+  // Terminate active connections first, then drop
+  await runAdminSql(
+    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${name}'`
+  );
+  await runAdminSql(`DROP DATABASE IF EXISTS "${name}"`);
+
+  try { await panelQuery(`DROP USER IF EXISTS "${db.db_user}"`); } catch { /* best effort */ }
+
   await panelQuery('DELETE FROM managed_databases WHERE name = $1', [name]);
 
   res.json({ success: true, data: { message: `Database ${name} deleted` } });
