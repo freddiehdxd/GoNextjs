@@ -1,4 +1,6 @@
 import { Router, Request, Response } from 'express';
+import path from 'path';
+import fs from 'fs/promises';
 import { query } from '../services/db';
 import { runScript, validateAppName } from '../services/executor';
 import { pm2Action, pm2List } from '../services/pm2';
@@ -6,11 +8,12 @@ import { allocatePort } from '../services/portAllocator';
 import { App } from '../types';
 
 const router = Router();
+const APPS_DIR = process.env.APPS_DIR ?? '/var/www/apps';
 
-// GET /api/apps — list all apps with live PM2 status
+// GET /api/apps
 router.get('/', async (_req: Request, res: Response) => {
-  const apps   = await query<App>('SELECT * FROM apps ORDER BY created_at DESC');
-  const procs  = await pm2List();
+  const apps  = await query<App>('SELECT * FROM apps ORDER BY created_at DESC');
+  const procs = await pm2List();
   const procMap = new Map(procs.map((p) => [p.name, p]));
 
   const enriched = apps.map((app) => ({
@@ -25,15 +28,20 @@ router.get('/', async (_req: Request, res: Response) => {
 
 // POST /api/apps — deploy a new app
 router.post('/', async (req: Request, res: Response) => {
-  const { name, repo_url, branch = 'main', env_vars = {} } = req.body as {
-    name?: string;
+  const {
+    name,
+    repo_url = '',
+    branch   = 'main',
+    env_vars = {},
+  } = req.body as {
+    name?:     string;
     repo_url?: string;
-    branch?: string;
+    branch?:   string;
     env_vars?: Record<string, string>;
   };
 
-  if (!name || !repo_url) {
-    res.status(400).json({ success: false, error: 'name and repo_url are required' });
+  if (!name) {
+    res.status(400).json({ success: false, error: 'App name is required' });
     return;
   }
 
@@ -45,7 +53,6 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  // Check uniqueness
   const existing = await query<App>('SELECT id FROM apps WHERE name = $1', [name]);
   if (existing.length > 0) {
     res.status(409).json({ success: false, error: 'App name already exists' });
@@ -54,11 +61,17 @@ router.post('/', async (req: Request, res: Response) => {
 
   const port = await allocatePort();
 
-  // Run deploy script: deploy_next_app.sh <name> <repo_url> <branch> <port>
-  const result = await runScript('deploy_next_app.sh', [name, repo_url, branch, String(port)]);
-  if (result.code !== 0) {
-    res.status(500).json({ success: false, error: result.stderr || 'Deploy script failed' });
-    return;
+  if (repo_url) {
+    // Git-based deploy
+    const result = await runScript('deploy_next_app.sh', [name, repo_url, branch, String(port)]);
+    if (result.code !== 0) {
+      res.status(500).json({ success: false, error: result.stderr || 'Deploy script failed' });
+      return;
+    }
+  } else {
+    // Empty / manual deploy — just create the directory
+    const appDir = path.join(APPS_DIR, name);
+    await fs.mkdir(appDir, { recursive: true });
   }
 
   const [app] = await query<App>(
@@ -78,7 +91,7 @@ router.get('/:name', async (req: Request, res: Response) => {
   res.json({ success: true, data: app });
 });
 
-// POST /api/apps/:name/action — start | stop | restart | rebuild
+// POST /api/apps/:name/action
 router.post('/:name/action', async (req: Request, res: Response) => {
   const { action } = req.body as { action?: string };
   const { name }   = req.params;
@@ -87,6 +100,10 @@ router.post('/:name/action', async (req: Request, res: Response) => {
   if (!app) { res.status(404).json({ success: false, error: 'App not found' }); return; }
 
   if (action === 'rebuild') {
+    if (!app.repo_url) {
+      res.status(400).json({ success: false, error: 'Cannot rebuild — app has no git repository' });
+      return;
+    }
     const result = await runScript('deploy_next_app.sh', [
       app.name, app.repo_url, app.branch, String(app.port),
     ]);
@@ -113,7 +130,7 @@ router.post('/:name/action', async (req: Request, res: Response) => {
   res.json({ success: pm2Result.success, data: { message: pm2Result.message } });
 });
 
-// PUT /api/apps/:name/env — update environment variables
+// PUT /api/apps/:name/env
 router.put('/:name/env', async (req: Request, res: Response) => {
   const { env_vars } = req.body as { env_vars?: Record<string, string> };
   const { name }     = req.params;
