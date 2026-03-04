@@ -16,6 +16,7 @@ import databasesRouter from './routes/databases';
 import redisRouter     from './routes/redis';
 import filesRouter     from './routes/files';
 import logsRouter      from './routes/logs';
+import statsRouter     from './routes/stats';
 
 const app  = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -44,6 +45,7 @@ app.use('/api/databases', databasesRouter);
 app.use('/api/redis',     redisRouter);
 app.use('/api/files',     filesRouter);
 app.use('/api/logs',      logsRouter);
+app.use('/api/stats',     statsRouter);
 
 // Health check (no auth)
 app.get('/health', (_req, res) => res.json({ ok: true }));

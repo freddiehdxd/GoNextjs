@@ -1,13 +1,15 @@
 'use client';
 import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { Server, Lock, User, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { api, setToken } from '@/lib/api';
 
 export default function LoginPage() {
-  const router   = useRouter();
-  const [creds, setCreds] = useState({ username: '', password: '' });
-  const [error, setError] = useState('');
+  const router  = useRouter();
+  const [creds, setCreds]   = useState({ username: '', password: '' });
+  const [error, setError]   = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPw, setShowPw] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -18,38 +20,107 @@ export default function LoginPage() {
       setToken(res.data.token);
       router.replace('/dashboard');
     } else {
-      setError(res.error ?? 'Login failed');
+      setError(res.error ?? 'Invalid credentials');
     }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-950">
-      <div className="w-full max-w-sm card">
-        <h1 className="mb-6 text-xl font-bold text-center text-white">Panel Login</h1>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="label">Username</label>
-            <input
-              className="input"
-              value={creds.username}
-              onChange={(e) => setCreds({ ...creds, username: e.target.value })}
-              autoFocus
-            />
+    <div className="flex min-h-screen items-center justify-center bg-[#080810] relative overflow-hidden">
+      {/* Background glow */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2 h-[500px] w-[500px] rounded-full opacity-[0.06]"
+          style={{ background: 'radial-gradient(circle, #8b5cf6 0%, transparent 70%)' }} />
+        <div className="absolute left-1/4 bottom-1/4 h-[300px] w-[300px] rounded-full opacity-[0.04]"
+          style={{ background: 'radial-gradient(circle, #3b82f6 0%, transparent 70%)' }} />
+      </div>
+
+      <div className="relative w-full max-w-md px-6">
+        {/* Logo */}
+        <div className="flex flex-col items-center mb-10">
+          <div className="h-14 w-14 rounded-2xl flex items-center justify-center mb-5 shadow-lg shadow-violet-500/20"
+            style={{ background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', border: '1px solid rgba(139,92,246,0.3)' }}>
+            <Server size={26} className="text-white" />
           </div>
-          <div>
-            <label className="label">Password</label>
-            <input
-              type="password"
-              className="input"
-              value={creds.password}
-              onChange={(e) => setCreds({ ...creds, password: e.target.value })}
-            />
-          </div>
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          <button type="submit" className="btn-primary w-full justify-center" disabled={loading}>
-            {loading ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
+          <h1 className="text-2xl font-bold text-white tracking-tight">ServerPanel</h1>
+          <p className="text-sm text-gray-500 mt-1.5">Self-hosted deployment platform</p>
+        </div>
+
+        {/* Card */}
+        <div className="glass p-8"
+          style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.05), 0 24px 48px -12px rgba(0,0,0,0.6)' }}>
+          <h2 className="text-base font-semibold text-white mb-6">Sign in to your panel</h2>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Username */}
+            <div>
+              <label className="label">Username</label>
+              <div className="relative">
+                <User size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-600 pointer-events-none" />
+                <input
+                  className="input pl-10"
+                  placeholder="admin"
+                  value={creds.username}
+                  onChange={(e) => setCreds({ ...creds, username: e.target.value })}
+                  autoFocus
+                  autoComplete="username"
+                />
+              </div>
+            </div>
+
+            {/* Password */}
+            <div>
+              <label className="label">Password</label>
+              <div className="relative">
+                <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-600 pointer-events-none" />
+                <input
+                  type={showPw ? 'text' : 'password'}
+                  className="input pl-10 pr-10"
+                  placeholder="••••••••"
+                  value={creds.password}
+                  onChange={(e) => setCreds({ ...creds, password: e.target.value })}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPw(!showPw)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-400 transition-colors"
+                >
+                  {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400">
+                {error}
+              </div>
+            )}
+
+            {/* Submit */}
+            <button
+              type="submit"
+              className="btn-primary w-full justify-center mt-2"
+              disabled={loading || !creds.username || !creds.password}
+            >
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  Signing in…
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  Sign in <ArrowRight size={15} />
+                </span>
+              )}
+            </button>
+          </form>
+        </div>
+
+        {/* Footer */}
+        <p className="text-center text-xs text-gray-700 mt-6">
+          Default credentials: <code className="text-gray-600">admin</code> / <code className="text-gray-600">changeme</code>
+        </p>
       </div>
     </div>
   );

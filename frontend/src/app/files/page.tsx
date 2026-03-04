@@ -1,19 +1,23 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Folder, FileText, ChevronRight, Upload, Edit3, Save, ArrowLeft } from 'lucide-react';
+import {
+  Folder, FileText, ChevronRight, Upload, Save, ArrowLeft, Home,
+  FolderOpen, Edit3,
+} from 'lucide-react';
 import Shell from '@/components/Shell';
 import { api, App } from '@/lib/api';
 
 interface FsEntry { name: string; type: 'dir' | 'file'; path: string }
 
 export default function FilesPage() {
-  const [apps,       setApps]       = useState<App[]>([]);
-  const [selectedApp,setSelectedApp] = useState('');
-  const [path,       setPath]        = useState('');
-  const [entries,    setEntries]     = useState<FsEntry[]>([]);
-  const [loading,    setLoading]     = useState(false);
-  const [editing,    setEditing]     = useState<{ path: string; content: string } | null>(null);
-  const [saving,     setSaving]      = useState(false);
+  const [apps,        setApps]        = useState<App[]>([]);
+  const [selectedApp, setSelectedApp] = useState('');
+  const [path,        setPath]        = useState('');
+  const [entries,     setEntries]     = useState<FsEntry[]>([]);
+  const [loading,     setLoading]     = useState(false);
+  const [editing,     setEditing]     = useState<{ path: string; content: string } | null>(null);
+  const [saving,      setSaving]      = useState(false);
+  const [saved,       setSaved]       = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -39,8 +43,8 @@ export default function FilesPage() {
     if (!editing) return;
     setSaving(true);
     await api.put(`/files/${selectedApp}/content?path=${encodeURIComponent(editing.path)}`, { content: editing.content });
-    setSaving(false);
-    setEditing(null);
+    setSaving(false); setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   }
 
   async function uploadFiles(files: FileList) {
@@ -61,35 +65,59 @@ export default function FilesPage() {
     setPath(parts.join('/'));
   }
 
+  const pathParts = path.split('/').filter(Boolean);
+
   return (
     <Shell>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white">File Manager</h1>
+        <p className="text-sm text-gray-600 mt-1">Browse and edit app files</p>
       </div>
 
+      {/* File editor view */}
       {editing ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setEditing(null)} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
-            <span className="text-gray-400 text-sm font-mono">{editing.path}</span>
-          </div>
-          <textarea
-            className="input w-full h-[60vh] font-mono text-xs resize-none"
-            value={editing.content}
-            onChange={(e) => setEditing({ ...editing, content: e.target.value })}
-          />
-          <div className="flex gap-3">
-            <button className="btn-primary" onClick={saveFile} disabled={saving}>
-              <Save size={14} /> {saving ? 'Saving…' : 'Save File'}
+        <div className="space-y-4 animate-slide-up">
+          {/* Editor toolbar */}
+          <div className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.02] px-4 py-3">
+            <button onClick={() => setEditing(null)} className="btn-ghost text-xs py-1.5 px-3">
+              <ArrowLeft size={13} /> Back
             </button>
-            <button className="btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
+            <ChevronRight size={13} className="text-gray-700" />
+            <span className="text-gray-400 text-xs font-mono flex-1 truncate">{editing.path}</span>
+            <button
+              className={`text-xs ${saved ? 'btn-success' : 'btn-primary'} py-1.5`}
+              onClick={saveFile}
+              disabled={saving}
+            >
+              <Save size={13} />
+              {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
+            </button>
+          </div>
+
+          {/* Code textarea */}
+          <div className="rounded-2xl border border-white/[0.07] overflow-hidden"
+            style={{ background: 'rgba(0,0,0,0.3)' }}>
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.06]"
+              style={{ background: 'rgba(255,255,255,0.02)' }}>
+              <FileText size={13} className="text-gray-600" />
+              <span className="text-xs text-gray-500 font-mono">{editing.path.split('/').pop()}</span>
+            </div>
+            <textarea
+              className="w-full bg-transparent px-5 py-4 font-mono text-xs text-gray-300 focus:outline-none resize-none leading-relaxed"
+              style={{ minHeight: '60vh' }}
+              value={editing.content}
+              onChange={(e) => setEditing({ ...editing, content: e.target.value })}
+              spellCheck={false}
+            />
           </div>
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex items-center gap-3">
+          {/* Toolbar */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* App selector */}
             <select
-              className="input w-48"
+              className="input w-44"
               value={selectedApp}
               onChange={(e) => { setSelectedApp(e.target.value); setPath(''); }}
             >
@@ -97,67 +125,112 @@ export default function FilesPage() {
               {apps.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
             </select>
 
+            {/* Breadcrumb */}
             {selectedApp && (
-              <>
-                <div className="flex items-center gap-1 text-sm text-gray-400">
-                  <button onClick={() => setPath('')} className="hover:text-white">{selectedApp}</button>
-                  {path.split('/').filter(Boolean).map((seg, i, arr) => (
-                    <span key={i} className="flex items-center gap-1">
-                      <ChevronRight size={12} />
-                      <button
-                        onClick={() => setPath(arr.slice(0, i + 1).join('/'))}
-                        className="hover:text-white"
-                      >{seg}</button>
-                    </span>
-                  ))}
-                </div>
+              <div className="flex items-center gap-1 flex-1 min-w-0 text-sm">
+                <button
+                  onClick={() => setPath('')}
+                  className="flex items-center gap-1.5 text-gray-500 hover:text-white transition-colors rounded-lg px-2 py-1"
+                >
+                  <Home size={12} />
+                  <span className="text-xs">{selectedApp}</span>
+                </button>
+                {pathParts.map((seg, i) => (
+                  <span key={i} className="flex items-center gap-1">
+                    <ChevronRight size={12} className="text-gray-700" />
+                    <button
+                      onClick={() => setPath(pathParts.slice(0, i + 1).join('/'))}
+                      className={`text-xs rounded-lg px-2 py-1 transition-colors ${
+                        i === pathParts.length - 1
+                          ? 'text-white font-medium'
+                          : 'text-gray-500 hover:text-white'
+                      }`}
+                    >
+                      {seg}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
 
-                <div className="ml-auto flex gap-2">
-                  {path && (
-                    <button onClick={goUp} className="btn-ghost text-xs"><ArrowLeft size={12} /> Up</button>
-                  )}
-                  <button onClick={() => fileInput.current?.click()} className="btn-ghost text-xs">
-                    <Upload size={12} /> Upload
+            {/* Actions */}
+            {selectedApp && (
+              <div className="flex gap-2 ml-auto shrink-0">
+                {path && (
+                  <button onClick={goUp} className="btn-ghost text-xs py-1.5">
+                    <ArrowLeft size={12} /> Up
                   </button>
-                  <input
-                    ref={fileInput}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => e.target.files && uploadFiles(e.target.files)}
-                  />
-                </div>
-              </>
+                )}
+                <button onClick={() => fileInput.current?.click()} className="btn-ghost text-xs py-1.5">
+                  <Upload size={12} /> Upload
+                </button>
+                <input
+                  ref={fileInput} type="file" multiple className="hidden"
+                  onChange={(e) => e.target.files && uploadFiles(e.target.files)}
+                />
+              </div>
             )}
           </div>
 
-          {selectedApp && (
-            <div className="card p-0 overflow-hidden">
+          {/* File listing */}
+          {selectedApp ? (
+            <div className="rounded-2xl border border-white/[0.07] overflow-hidden"
+              style={{ background: 'rgba(255,255,255,0.015)' }}>
+              {/* Header */}
+              <div className="flex items-center gap-3 px-5 py-3 border-b border-white/[0.05]"
+                style={{ background: 'rgba(255,255,255,0.02)' }}>
+                <FolderOpen size={14} className="text-violet-400" />
+                <span className="text-xs text-gray-500 font-mono">
+                  /var/www/apps/{selectedApp}{path ? '/' + path : ''}
+                </span>
+              </div>
+
               {loading ? (
-                <p className="p-6 text-gray-500 text-sm">Loading…</p>
-              ) : entries.length === 0 ? (
-                <p className="p-6 text-gray-500 text-sm">Empty directory</p>
-              ) : (
-                <div className="divide-y divide-gray-800/50">
-                  {entries.map((entry) => (
-                    <button
-                      key={entry.path}
-                      onClick={() => entry.type === 'dir' ? setPath(entry.path) : openFile(entry)}
-                      className="w-full flex items-center gap-3 px-5 py-3 text-sm hover:bg-gray-800/40 transition-colors text-left"
-                    >
-                      {entry.type === 'dir'
-                        ? <Folder size={16} className="text-brand-500 shrink-0" />
-                        : <FileText size={16} className="text-gray-500 shrink-0" />}
-                      <span className={entry.type === 'dir' ? 'text-white' : 'text-gray-300'}>
-                        {entry.name}
-                      </span>
-                      {entry.type === 'file' && (
-                        <Edit3 size={12} className="ml-auto text-gray-600" />
-                      )}
-                    </button>
+                <div className="p-6 space-y-2">
+                  {[...Array(4)].map((_, i) => (
+                    <div key={i} className="h-9 rounded-lg shimmer" style={{ background: 'rgba(255,255,255,0.02)' }} />
                   ))}
                 </div>
+              ) : entries.length === 0 ? (
+                <div className="p-10 text-center">
+                  <p className="text-gray-600 text-sm">Empty directory</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-white/[0.04]">
+                  {entries
+                    .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
+                    .map((entry) => (
+                      <button
+                        key={entry.path}
+                        onClick={() => entry.type === 'dir' ? setPath(entry.path) : openFile(entry)}
+                        className="w-full flex items-center gap-3 px-5 py-3 text-sm hover:bg-white/[0.03] transition-colors text-left group"
+                      >
+                        {entry.type === 'dir'
+                          ? <Folder size={15} className="text-violet-400 shrink-0" />
+                          : <FileText size={15} className="text-gray-600 shrink-0" />}
+                        <span className={entry.type === 'dir' ? 'text-gray-200 font-medium' : 'text-gray-400'}>
+                          {entry.name}
+                        </span>
+                        {entry.type === 'file' && (
+                          <Edit3 size={11} className="ml-auto text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        )}
+                        {entry.type === 'dir' && (
+                          <ChevronRight size={12} className="ml-auto text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        )}
+                      </button>
+                    ))}
+                </div>
               )}
+            </div>
+          ) : (
+            <div className="card flex flex-col items-center justify-center py-24 text-center"
+              style={{ background: 'rgba(255,255,255,0.01)' }}>
+              <div className="h-16 w-16 rounded-2xl flex items-center justify-center mb-5"
+                style={{ background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.15)' }}>
+                <FolderOpen size={28} className="text-violet-500" />
+              </div>
+              <p className="text-gray-300 font-semibold mb-1.5">Select an app</p>
+              <p className="text-gray-600 text-sm">Choose an app from the dropdown to browse its files</p>
             </div>
           )}
         </div>
