@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -43,7 +42,7 @@ func (h *SSLHandler) Enable(w http.ResponseWriter, r *http.Request) {
 
 	// Get app
 	var app models.App
-	var envJSON []byte
+	var envJSON interface{}
 	err := h.db.QueryRow(ctx,
 		"SELECT id, name, repo_url, branch, port, domain, ssl_enabled, env_vars, created_at, updated_at FROM apps WHERE name = $1",
 		body.AppName,
