@@ -29,7 +29,7 @@ warn()  { echo -e "${YELLOW}[warn]${NC}  $*"; }
 fail()  { echo -e "${RED}[fail]${NC}  $*" >&2; exit 1; }
 step()  { echo -e "\n${BOLD}${CYAN}[$1/${TOTAL_STEPS}]${NC} ${BOLD}$2${NC}"; }
 
-TOTAL_STEPS=11
+TOTAL_STEPS=12
 
 echo ""
 echo -e "${BOLD}${CYAN}╔════════════════════════════════════════╗${NC}"
@@ -346,6 +346,100 @@ cat > /etc/cron.d/panel-backup <<CRON
 CRON
 chmod 600 /etc/cron.d/panel-backup
 ok "Daily pg_dump backup at 3:00 AM (14-day retention)"
+
+# ── 12. Security — fail2ban, NGINX hardening, bcrypt password ─────────────
+step 12 "Security — fail2ban, NGINX hardening, bcrypt password"
+
+# fail2ban
+apt-get install -y -qq fail2ban > /dev/null 2>&1
+
+cat > /etc/fail2ban/jail.local <<'JAIL'
+[DEFAULT]
+bantime  = 3600
+findtime = 600
+maxretry = 5
+backend  = systemd
+
+[sshd]
+enabled  = true
+port     = ssh
+filter   = sshd
+logpath  = /var/log/auth.log
+maxretry = 3
+bantime  = 7200
+
+[nginx-http-auth]
+enabled  = true
+port     = http,https
+filter   = nginx-http-auth
+logpath  = /var/log/nginx/error.log
+maxretry = 5
+
+[nginx-botsearch]
+enabled  = true
+port     = http,https
+filter   = nginx-botsearch
+logpath  = /var/log/nginx/access.log
+maxretry = 2
+bantime  = 86400
+
+[panel-login]
+enabled  = true
+port     = http,https
+filter   = panel-login
+logpath  = /var/log/panel/backend.log
+maxretry = 3
+bantime  = 7200
+JAIL
+
+cat > /etc/fail2ban/filter.d/panel-login.conf <<'FILTER'
+[Definition]
+failregex = ^.*Login lockout: IP <HOST> locked.*$
+            ^.*Blocked login attempt from locked IP: <HOST>.*$
+ignoreregex =
+FILTER
+
+systemctl enable fail2ban > /dev/null 2>&1
+systemctl restart fail2ban
+ok "fail2ban active — SSH (3 fails = 2h ban), panel login, NGINX"
+
+# NGINX hardening
+cat > /etc/nginx/conf.d/security.conf <<'NGINXSEC'
+# Hide NGINX version
+server_tokens off;
+
+# Security headers
+add_header X-Frame-Options "DENY" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-XSS-Protection "1; mode=block" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+# Limit buffer sizes to prevent large header attacks
+client_body_buffer_size  16k;
+client_header_buffer_size 1k;
+large_client_header_buffers 4 8k;
+
+# Timeouts to prevent slowloris
+client_body_timeout   12;
+client_header_timeout 12;
+send_timeout          10;
+NGINXSEC
+
+nginx -t > /dev/null 2>&1 && systemctl reload nginx
+ok "NGINX hardened — version hidden, security headers, buffer limits"
+
+# Bcrypt admin password
+cd "${PANEL_DIR}/backend"
+BCRYPT_HASH=$(node -e "require('bcryptjs').hash('${ADMIN_PASS}', 12).then(h => process.stdout.write(h))")
+if [ -n "$BCRYPT_HASH" ]; then
+  sed -i '/^ADMIN_PASSWORD=/d' .env
+  grep -q 'ADMIN_PASSWORD_HASH' .env && \
+    sed -i "s|^ADMIN_PASSWORD_HASH=.*|ADMIN_PASSWORD_HASH=$BCRYPT_HASH|" .env || \
+    echo "ADMIN_PASSWORD_HASH=$BCRYPT_HASH" >> .env
+  ok "Admin password bcrypt-hashed (plaintext removed from .env)"
+else
+  warn "Could not hash password — keeping plaintext (change manually later)"
+fi
 
 # ── Done ─────────────────────────────────────────────────────────────────
 echo ""

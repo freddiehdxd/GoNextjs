@@ -12,7 +12,11 @@ const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH ?? '';
 // Cookie config
 const COOKIE_NAME = 'panel_token';
 const COOKIE_MAX_AGE = 2 * 60 * 60 * 1000; // 2 hours (matches JWT expiry)
-const IS_PROD = process.env.NODE_ENV === 'production';
+// Only set Secure flag when actually behind HTTPS (not just production mode)
+// Auto-detect: PANEL_ORIGIN starts with https://, or COOKIE_SECURE=true
+const USE_SECURE_COOKIE =
+  process.env.COOKIE_SECURE === 'true' ||
+  (process.env.PANEL_ORIGIN ?? '').startsWith('https://');
 
 // ─── Login lockout ────────────────────────────────────────────────────────────
 // In-memory tracker: IP -> { count, lockedUntil }
@@ -113,7 +117,7 @@ router.post('/login', async (req: Request, res: Response) => {
   // Set HttpOnly cookie — browser sends it automatically, JS cannot read it
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
-    secure: IS_PROD,         // HTTPS only in production
+    secure: USE_SECURE_COOKIE,
     sameSite: 'lax',
     maxAge: COOKIE_MAX_AGE,
     path: '/',
@@ -127,7 +131,7 @@ router.post('/login', async (req: Request, res: Response) => {
 
 // ─── POST /api/auth/logout ────────────────────────────────────────────────────
 router.post('/logout', (_req: Request, res: Response) => {
-  res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: IS_PROD, sameSite: 'lax', path: '/' });
+  res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: USE_SECURE_COOKIE, sameSite: 'lax', path: '/' });
   res.json({ success: true, data: { message: 'Logged out' } });
 });
 
@@ -147,7 +151,7 @@ router.get('/me', (req: Request, res: Response) => {
 
   const payload = verifyToken(token);
   if (!payload) {
-    res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: IS_PROD, sameSite: 'lax', path: '/' });
+    res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: USE_SECURE_COOKIE, sameSite: 'lax', path: '/' });
     res.status(401).json({ success: false, error: 'Invalid or expired token' });
     return;
   }
