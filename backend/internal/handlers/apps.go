@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,6 +16,11 @@ import (
 	"panel-backend/internal/config"
 	"panel-backend/internal/models"
 	"panel-backend/internal/services"
+)
+
+var (
+	repoURLPattern = regexp.MustCompile(`^(https?://|git@)`)
+	branchPattern  = regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)
 )
 
 // AppsHandler handles application routes
@@ -130,9 +138,19 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if body.RepoURL != "" && !repoURLPattern.MatchString(body.RepoURL) {
+		Error(w, http.StatusBadRequest, "Invalid repository URL. Must start with https:// or git@")
+		return
+	}
+
 	if body.Branch == "" {
 		body.Branch = "main"
 	}
+	if !branchPattern.MatchString(body.Branch) {
+		Error(w, http.StatusBadRequest, "Invalid branch name. Use letters, numbers, dots, hyphens and slashes only.")
+		return
+	}
+
 	if body.EnvVars == nil {
 		body.EnvVars = make(map[string]string)
 	}
@@ -167,11 +185,7 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if result.Code != 0 {
-			msg := result.Stderr
-			if msg == "" {
-				msg = "Deploy script failed"
-			}
-			Error(w, http.StatusInternalServerError, msg)
+			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
 			return
 		}
 	} else {
@@ -241,6 +255,13 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusInternalServerError, "Failed to delete app")
 			return
 		}
+
+		// Clean up filesystem
+		appDir := filepath.Join(h.cfg.AppsDir, app.Name)
+		if resolved, err := filepath.Abs(appDir); err == nil && strings.HasPrefix(resolved, filepath.Clean(h.cfg.AppsDir)) {
+			os.RemoveAll(resolved)
+		}
+
 		Success(w, map[string]string{"message": "App deleted"})
 
 	case "rebuild":
@@ -256,11 +277,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if result.Code != 0 {
-			msg := result.Stderr
-			if msg == "" {
-				msg = "Deploy script failed"
-			}
-			Error(w, http.StatusInternalServerError, msg)
+			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
 			return
 		}
 		Success(w, map[string]string{"message": "Rebuild complete"})
@@ -325,4 +342,25 @@ func (h *AppsHandler) getAppByName(ctx context.Context, name string) (*models.Ap
 		app.EnvVars = make(map[string]string)
 	}
 	return &app, nil
+}
+
+// sanitizeDeployError strips internal paths and limits error message length for client responses
+func sanitizeDeployError(stderr string) string {
+	if stderr == "" {
+		return "Deploy script failed"
+	}
+	// Only return the last line (most relevant error) and truncate
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	msg := lines[len(lines)-1]
+	// Strip common internal path prefixes
+	for _, prefix := range []string{"/var/www/apps/", "/opt/panel/", "/home/", "/root/"} {
+		msg = strings.ReplaceAll(msg, prefix, "")
+	}
+	if len(msg) > 200 {
+		msg = msg[:200] + "..."
+	}
+	if msg == "" {
+		return "Deploy script failed"
+	}
+	return msg
 }

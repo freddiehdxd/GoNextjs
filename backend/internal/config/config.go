@@ -64,6 +64,9 @@ func Load() (*Config, error) {
 		if c.JWTSecret == "" || c.JWTSecret == "dev-secret-change-me" {
 			return nil, fmt.Errorf("JWT_SECRET must be set to a secure value in production")
 		}
+		if c.AdminPassHash == "" {
+			return nil, fmt.Errorf("ADMIN_PASSWORD_HASH is required in production (plaintext passwords are not allowed)")
+		}
 	}
 
 	if c.JWTSecret == "" {

@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -42,7 +44,12 @@ func NewAuthHandler(cfg *config.Config) *AuthHandler {
 		failures: make(map[string]*loginAttempt),
 	}
 
-	// Start cleanup goroutine
+	// Warn if using plaintext password fallback (dev mode only — production enforced in config)
+	if cfg.AdminPassHash == "" && cfg.AdminPassword != "" {
+		log.Println("WARNING: Using plaintext admin password. Set ADMIN_PASSWORD_HASH for production use.")
+	}
+
+	// Start cleanup goroutine — remove expired lockout entries to prevent memory leak
 	go func() {
 		ticker := time.NewTicker(cleanupInterval)
 		defer ticker.Stop()
@@ -50,7 +57,8 @@ func NewAuthHandler(cfg *config.Config) *AuthHandler {
 			h.mu.Lock()
 			now := time.Now()
 			for ip, a := range h.failures {
-				if a.lockedUntil.Before(now) && a.count == 0 {
+				// Delete entries where lockout has expired, or entries with no lockout and no recent attempts
+				if (!a.lockedUntil.IsZero() && a.lockedUntil.Before(now)) || a.count == 0 {
 					delete(h.failures, ip)
 				}
 			}
@@ -121,7 +129,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 	})
 
-	Success(w, map[string]string{"token": tokenStr})
+	Success(w, map[string]string{"message": "Login successful"})
 }
 
 // Logout handles POST /api/auth/logout
@@ -195,18 +203,30 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 
 // verifyCredentials checks username/password against config
 func (h *AuthHandler) verifyCredentials(username, password string) bool {
-	if username != h.cfg.AdminUsername {
+	// Constant-time username comparison to prevent timing attacks
+	usernameMatch := subtle.ConstantTimeCompare([]byte(username), []byte(h.cfg.AdminUsername)) == 1
+
+	if !usernameMatch {
+		// Run bcrypt with a valid dummy hash to prevent timing-based user enumeration
+		// This ensures failed-username and failed-password take similar time
+		bcrypt.CompareHashAndPassword(
+			[]byte("$2a$12$K4H7GhHqvHJYpjGKlBmr8OdX6B.lMFn3kLLhMzTnOE5j5L8Qz3cG6"),
+			[]byte(password),
+		)
 		return false
 	}
 
-	// Prefer bcrypt hash
+	// Prefer bcrypt hash (production enforces this via config validation)
 	if h.cfg.AdminPassHash != "" {
 		err := bcrypt.CompareHashAndPassword([]byte(h.cfg.AdminPassHash), []byte(password))
 		return err == nil
 	}
 
-	// Fall back to plaintext
-	return h.cfg.AdminPassword != "" && password == h.cfg.AdminPassword
+	// Fall back to plaintext with constant-time comparison (dev mode only)
+	if h.cfg.AdminPassword == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(password), []byte(h.cfg.AdminPassword)) == 1
 }
 
 // signToken creates a JWT for the given username

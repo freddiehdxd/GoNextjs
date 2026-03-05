@@ -85,6 +85,8 @@ func (db *DB) InitSchema(ctx context.Context) error {
 			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 
+		CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at);
+
 		DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL '90 days';
 	`
 

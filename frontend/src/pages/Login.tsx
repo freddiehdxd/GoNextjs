@@ -11,7 +11,7 @@ export default function Login() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true); setError('');
-    const res = await api.post<{ token: string }>('/auth/login', creds);
+    const res = await api.post<{ message: string }>('/auth/login', creds);
     if (res.success) {
       window.location.href = '/dashboard';
       return;

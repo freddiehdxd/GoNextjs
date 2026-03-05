@@ -20,6 +20,16 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1024 || PORT > 65535 )); then
   exit 1
 fi
 
+if ! [[ "$REPO_URL" =~ ^https?:// ]] && ! [[ "$REPO_URL" =~ ^git@ ]]; then
+  echo "[error] Invalid repo URL: must start with https:// or git@" >&2
+  exit 1
+fi
+
+if ! [[ "$BRANCH" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+  echo "[error] Invalid branch name: ${BRANCH}" >&2
+  exit 1
+fi
+
 APP_DIR="${APPS_DIR}/${APP_NAME}"
 
 echo "[panel] Deploying ${APP_NAME} from ${REPO_URL} (${BRANCH}) on port ${PORT}"
@@ -34,7 +44,7 @@ else
   echo "[panel] Cloning repository..."
   mkdir -p "${APPS_DIR}"
   rm -rf "${APP_DIR}"
-  git clone --branch "${BRANCH}" --depth 1 "${REPO_URL}" "${APP_DIR}"
+  git clone --branch "${BRANCH}" --depth 1 -- "${REPO_URL}" "${APP_DIR}"
 fi
 
 cd "${APP_DIR}"

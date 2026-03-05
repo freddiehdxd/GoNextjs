@@ -14,6 +14,7 @@ import (
 
 	"panel-backend/internal/config"
 	"panel-backend/internal/models"
+	"panel-backend/internal/services"
 )
 
 const (
@@ -43,6 +44,10 @@ func NewFilesHandler(cfg *config.Config) *FilesHandler {
 // List handles GET /api/files/:app
 func (h *FilesHandler) List(w http.ResponseWriter, r *http.Request) {
 	appName := chi.URLParam(r, "app")
+	if !services.ValidateAppName(appName) {
+		Error(w, http.StatusBadRequest, "Invalid app name")
+		return
+	}
 	subPath := r.URL.Query().Get("path")
 
 	appDir := filepath.Join(h.cfg.AppsDir, appName)
@@ -98,6 +103,10 @@ func (h *FilesHandler) List(w http.ResponseWriter, r *http.Request) {
 // GetContent handles GET /api/files/:app/content
 func (h *FilesHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 	appName := chi.URLParam(r, "app")
+	if !services.ValidateAppName(appName) {
+		Error(w, http.StatusBadRequest, "Invalid app name")
+		return
+	}
 	subPath := r.URL.Query().Get("path")
 
 	if subPath == "" {
@@ -147,6 +156,10 @@ func (h *FilesHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 // SaveContent handles PUT /api/files/:app/content
 func (h *FilesHandler) SaveContent(w http.ResponseWriter, r *http.Request) {
 	appName := chi.URLParam(r, "app")
+	if !services.ValidateAppName(appName) {
+		Error(w, http.StatusBadRequest, "Invalid app name")
+		return
+	}
 	subPath := r.URL.Query().Get("path")
 
 	if subPath == "" {
@@ -189,6 +202,10 @@ func (h *FilesHandler) SaveContent(w http.ResponseWriter, r *http.Request) {
 // Upload handles POST /api/files/:app/upload
 func (h *FilesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	appName := chi.URLParam(r, "app")
+	if !services.ValidateAppName(appName) {
+		Error(w, http.StatusBadRequest, "Invalid app name")
+		return
+	}
 	subPath := r.URL.Query().Get("path")
 
 	appDir := filepath.Join(h.cfg.AppsDir, appName)
