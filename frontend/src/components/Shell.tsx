@@ -1,14 +1,9 @@
 'use client';
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import Nav from './Nav';
 
 export default function Shell({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  useEffect(() => {
-    if (!localStorage.getItem('panel_token')) router.replace('/login');
-  }, [router]);
-
+  // Auth is now handled server-side by Next.js middleware (checks HttpOnly cookie).
+  // No client-side localStorage check needed.
   return (
     <div className="flex min-h-screen bg-[#080810]">
       <Nav />

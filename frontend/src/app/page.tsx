@@ -1,12 +1,6 @@
-'use client';
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { redirect } from 'next/navigation';
 
 export default function Root() {
-  const router = useRouter();
-  useEffect(() => {
-    const token = localStorage.getItem('panel_token');
-    router.replace(token ? '/dashboard' : '/login');
-  }, [router]);
-  return null;
+  // Server-side redirect — middleware handles auth check via HttpOnly cookie
+  redirect('/dashboard');
 }

@@ -50,10 +50,9 @@ export default function FilesPage() {
   async function uploadFiles(files: FileList) {
     const form = new FormData();
     Array.from(files).forEach((f) => form.append('files', f));
-    const token = localStorage.getItem('panel_token');
     await fetch(`/api/files/${selectedApp}/upload?path=${encodeURIComponent(path)}`, {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'same-origin', // HttpOnly cookie sent automatically
       body: form,
     });
     browse(selectedApp, path);
