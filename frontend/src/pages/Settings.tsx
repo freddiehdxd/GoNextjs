@@ -21,6 +21,7 @@ interface UpdateInfo {
   remoteVersion: string;
   updateAvailable: boolean;
   updating: boolean;
+  runningApps: number;
   commits?: Commit[];
   commitCount?: number;
 }
@@ -272,6 +273,15 @@ export default function Settings() {
               </button>
             </div>
 
+            {/* Safety notice */}
+            <div className="mt-3 flex items-center gap-2 text-xs text-emerald-400/80">
+              <CheckCircle2 size={12} className="shrink-0" />
+              <span>
+                Zero-downtime update — your {info.runningApps > 0 ? `${info.runningApps} running app${info.runningApps !== 1 ? 's' : ''} will` : 'apps will'} not be affected.
+                Only the panel backend will restart briefly.
+              </span>
+            </div>
+
             {/* Commit list */}
             {info.commits && info.commits.length > 0 && (
               <div className="mt-3">
@@ -313,7 +323,7 @@ export default function Settings() {
             <CheckCircle2 size={18} className="text-emerald-400" />
             <div>
               <p className="text-sm font-semibold text-emerald-300">Update completed successfully!</p>
-              <p className="text-xs text-gray-400 mt-0.5">The panel has been updated and restarted.</p>
+              <p className="text-xs text-gray-400 mt-0.5">The panel has been updated and restarted. Your apps were not affected.</p>
             </div>
           </div>
         )}

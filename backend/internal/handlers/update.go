@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -80,6 +81,9 @@ func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 
 	updateAvailable := localHead != remoteHead
 
+	// Count running user apps (everything except panel-backend)
+	userApps := countUserApps()
+
 	result := map[string]interface{}{
 		"currentVersion":  localHead[:8],
 		"currentCommit":   localMsg,
@@ -87,6 +91,7 @@ func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 		"remoteVersion":   remoteHead[:8],
 		"updateAvailable": updateAvailable,
 		"updating":        h.updating,
+		"runningApps":     userApps,
 	}
 
 	// If update available, get the commit log between local and remote
@@ -180,19 +185,18 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Escape for JSON
-		escaped := strings.ReplaceAll(line, `\`, `\\`)
-		escaped = strings.ReplaceAll(escaped, `"`, `\"`)
-		sendSSE(w, flusher, "log", fmt.Sprintf(`{"line":"%s"}`, escaped))
+		data, _ := json.Marshal(map[string]string{"line": line})
+		sendSSE(w, flusher, "log", string(data))
 	}
 
 	// Wait for process to finish
 	err = cmd.Wait()
 	if err != nil {
-		sendSSE(w, flusher, "error", fmt.Sprintf(`{"message":"Update failed: %s"}`, err.Error()))
+		data, _ := json.Marshal(map[string]string{"message": "Update failed: " + err.Error()})
+		sendSSE(w, flusher, "error", string(data))
 		log.Printf("Panel update failed: %v", err)
 	} else {
-		sendSSE(w, flusher, "complete", `{"message":"Update completed successfully!"}`)
+		sendSSE(w, flusher, "complete", `{"message":"Update completed successfully! Your apps were not affected."}`)
 		log.Println("Panel update completed successfully")
 	}
 }
@@ -223,4 +227,32 @@ func (h *UpdateHandler) Log(w http.ResponseWriter, r *http.Request) {
 func sendSSE(w http.ResponseWriter, flusher http.Flusher, event, data string) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
 	flusher.Flush()
+}
+
+// countUserApps returns the number of running PM2 processes that are NOT panel-backend
+func countUserApps() int {
+	cmd := exec.Command("/usr/bin/pm2", "jlist")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	var procs []struct {
+		Name   string `json:"name"`
+		PM2Env struct {
+			Status string `json:"status"`
+		} `json:"pm2_env"`
+	}
+
+	if err := json.Unmarshal(out, &procs); err != nil {
+		return 0
+	}
+
+	count := 0
+	for _, p := range procs {
+		if p.Name != "panel-backend" && p.PM2Env.Status == "online" {
+			count++
+		}
+	}
+	return count
 }
