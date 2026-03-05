@@ -36,6 +36,7 @@ var allowedBins = map[string]string{
 	"systemctl": "/bin/systemctl",
 	"psql":      "/usr/bin/psql",
 	"tail":      "/usr/bin/tail",
+	"redis-cli": "/usr/bin/redis-cli",
 }
 
 // Validation regexes
