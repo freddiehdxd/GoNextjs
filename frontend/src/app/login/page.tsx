@@ -119,7 +119,7 @@ export default function LoginPage() {
 
         {/* Footer */}
         <p className="text-center text-xs text-gray-700 mt-6">
-          Default credentials: <code className="text-gray-600">admin</code> / <code className="text-gray-600">changeme</code>
+          ServerPanel &mdash; Self-hosted deployment platform
         </p>
       </div>
     </div>

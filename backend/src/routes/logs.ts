@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import fs from 'fs/promises';
+import { spawn } from 'child_process';
 import { pm2Logs } from '../services/pm2';
 import { validateAppName } from '../services/executor';
 
@@ -8,14 +8,35 @@ const router = Router();
 const NGINX_ACCESS_LOG = '/var/log/nginx/access.log';
 const NGINX_ERROR_LOG  = '/var/log/nginx/error.log';
 
-async function tailFile(filePath: string, lines: number): Promise<string> {
-  try {
-    const content = await fs.readFile(filePath, 'utf8');
-    const all     = content.split('\n');
-    return all.slice(-lines).join('\n');
-  } catch {
-    return `(log file not found: ${filePath})`;
-  }
+/**
+ * Read the last N lines of a file using `tail`.
+ * Avoids loading entire file into memory (OOM-safe for large logs).
+ */
+function tailFile(filePath: string, lines: number): Promise<string> {
+  return new Promise((resolve) => {
+    const proc = spawn('/usr/bin/tail', ['-n', String(lines), filePath], {
+      shell: false,
+      timeout: 5_000,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (d) => (stdout += d.toString()));
+    proc.stderr.on('data', (d) => (stderr += d.toString()));
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        resolve(`(log file not found: ${filePath})`);
+      } else {
+        resolve(stdout);
+      }
+    });
+
+    proc.on('error', () => {
+      resolve(`(log file not found: ${filePath})`);
+    });
+  });
 }
 
 // GET /api/logs/app/:name?lines=200

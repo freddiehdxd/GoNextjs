@@ -2,7 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { JwtPayload } from '../types';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-me';
+// No fallback — startup validation in index.ts guarantees JWT_SECRET exists
+const JWT_SECRET = process.env.JWT_SECRET!;
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;

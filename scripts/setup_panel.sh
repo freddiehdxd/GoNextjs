@@ -29,7 +29,7 @@ warn()  { echo -e "${YELLOW}[warn]${NC}  $*"; }
 fail()  { echo -e "${RED}[fail]${NC}  $*" >&2; exit 1; }
 step()  { echo -e "\n${BOLD}${CYAN}[$1/${TOTAL_STEPS}]${NC} ${BOLD}$2${NC}"; }
 
-TOTAL_STEPS=10
+TOTAL_STEPS=11
 
 echo ""
 echo -e "${BOLD}${CYAN}╔════════════════════════════════════════╗${NC}"
@@ -289,6 +289,63 @@ if ! command -v certbot &>/dev/null; then
   apt-get install -y -qq certbot python3-certbot-nginx > /dev/null 2>&1
   ok "Certbot installed (ready for SSL)"
 fi
+
+# ── 11. Hardening — logrotate, backups, auto-updates ─────────────────────
+step 11 "Hardening — logrotate, backups, auto-updates"
+
+# Logrotate for panel logs
+cat > /etc/logrotate.d/panel <<'LOGROTATE'
+/var/log/panel/*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    copytruncate
+}
+LOGROTATE
+
+# Logrotate for NGINX (if not already present)
+if [ ! -f /etc/logrotate.d/nginx ]; then
+cat > /etc/logrotate.d/nginx <<'LOGROTATE'
+/var/log/nginx/*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 www-data adm
+    sharedscripts
+    postrotate
+        [ -f /var/run/nginx.pid ] && kill -USR1 $(cat /var/run/nginx.pid)
+    endscript
+}
+LOGROTATE
+fi
+
+ok "Logrotate configured (14-day retention)"
+
+# Unattended security upgrades
+apt-get install -y -qq unattended-upgrades > /dev/null 2>&1
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'AUTOUPGRADE'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+AUTOUPGRADE
+ok "Unattended security upgrades enabled"
+
+# Daily PostgreSQL backup via cron
+mkdir -p /var/backups/panel
+cat > /etc/cron.d/panel-backup <<CRON
+# Daily backup of panel database at 3:00 AM
+0 3 * * * root PGPASSWORD='${PANEL_DB_PASS}' pg_dump -h localhost -U ${PANEL_DB_USER} ${PANEL_DB_NAME} | gzip > /var/backups/panel/${PANEL_DB_NAME}_\$(date +\%Y\%m\%d).sql.gz 2>/dev/null
+# Keep only last 14 days of backups
+5 3 * * * root find /var/backups/panel -name "*.sql.gz" -mtime +14 -delete 2>/dev/null
+CRON
+chmod 600 /etc/cron.d/panel-backup
+ok "Daily pg_dump backup at 3:00 AM (14-day retention)"
 
 # ── Done ─────────────────────────────────────────────────────────────────
 echo ""

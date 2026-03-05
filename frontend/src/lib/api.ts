@@ -14,15 +14,32 @@ async function req<T>(
   body?: unknown
 ): Promise<{ success: boolean; data?: T; error?: string }> {
   const token = getToken();
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  return res.json();
+
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    // 401 interceptor — clear token and redirect to login
+    if (res.status === 401 && !path.startsWith('/auth/')) {
+      clearToken();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+      return { success: false, error: 'Session expired. Redirecting to login...' };
+    }
+
+    return await res.json();
+  } catch (err) {
+    // Network error, server down, etc.
+    const message = err instanceof Error ? err.message : 'Network error';
+    return { success: false, error: `Request failed: ${message}` };
+  }
 }
 
 export const api = {
