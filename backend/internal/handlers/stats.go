@@ -44,6 +44,11 @@ type StatsHandler struct {
 	prevDiskIO  diskIOCounters
 	prevTime    time.Time
 
+	// Slow-poll cached data (processes + PM2 apps, refreshed every 10s)
+	slowTick     int
+	cachedProcs  []models.ProcessStats
+	cachedApps   models.AppsStats
+
 	// History ring buffer
 	history   [historySize]historyPoint
 	historyIdx int
@@ -216,6 +221,8 @@ func (h *StatsHandler) doCollect() {
 
 	stats := &models.Stats{}
 
+	// ---- Fast path: lightweight /proc reads every 2s ----
+
 	// CPU (aggregate)
 	currentCPU := readCPUTimes()
 	stats.CPU = h.calculateCPU(currentCPU)
@@ -265,37 +272,48 @@ func (h *StatsHandler) doCollect() {
 	// System info
 	stats.System = readSystem()
 
-	// Top processes
-	stats.Processes = readTopProcesses(h.totalMem)
+	// ---- Slow path: expensive ops every 5th tick (10s) ----
+	h.slowTick++
+	if h.slowTick >= 5 {
+		h.slowTick = 0
 
-	// Apps from PM2
-	pm2List, err := h.pm2.List()
-	if err == nil {
-		running := 0
-		stopped := 0
-		appList := make([]map[string]interface{}, 0, len(pm2List))
-		for _, p := range pm2List {
-			if p.Status == "online" {
-				running++
-			} else {
-				stopped++
+		// Top processes (iterates all /proc/[pid]/)
+		h.cachedProcs = readTopProcesses(h.totalMem)
+
+		// PM2 list (spawns pm2 jlist subprocess)
+		pm2List, err := h.pm2.List()
+		if err == nil {
+			running := 0
+			stopped := 0
+			appList := make([]map[string]interface{}, 0, len(pm2List))
+			for _, p := range pm2List {
+				if p.Status == "online" {
+					running++
+				} else {
+					stopped++
+				}
+				appList = append(appList, map[string]interface{}{
+					"name":   p.Name,
+					"status": p.Status,
+					"cpu":    p.CPU,
+					"memory": p.Memory,
+					"uptime": p.Uptime,
+				})
 			}
-			appList = append(appList, map[string]interface{}{
-				"name":   p.Name,
-				"status": p.Status,
-				"cpu":    p.CPU,
-				"memory": p.Memory,
-				"uptime": p.Uptime,
-			})
+			h.cachedApps = models.AppsStats{
+				Total:   len(pm2List),
+				Running: running,
+				Stopped: stopped,
+				List:    appList,
+			}
 		}
-		stats.Apps = models.AppsStats{
-			Total:   len(pm2List),
-			Running: running,
-			Stopped: stopped,
-			List:    appList,
-		}
-	} else {
-		stats.Apps = models.AppsStats{List: []interface{}{}}
+	}
+
+	// Use cached slow data
+	stats.Processes = h.cachedProcs
+	stats.Apps = h.cachedApps
+	if stats.Apps.List == nil {
+		stats.Apps.List = []interface{}{}
 	}
 
 	// Update previous readings
