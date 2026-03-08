@@ -422,8 +422,12 @@ func (h *DatabasesHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		}
 		tmpFile.Close()
 
-		// Run pg_restore: --no-owner --no-acl to skip ownership, --dbname for target
+		// Run pg_restore:
+		//   --clean --if-exists: drop existing objects before recreating (safe for re-imports)
+		//   --no-owner --no-acl: skip ownership/permissions from the dump
+		//   --dbname: target database connection URI
 		result, err = h.exec.RunBin("pg_restore",
+			"--clean", "--if-exists",
 			"--no-owner", "--no-acl",
 			"--dbname", connURI,
 			tmpPath)
