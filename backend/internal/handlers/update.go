@@ -139,20 +139,29 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		h.mu.Unlock()
 	}()
 
-	// Set SSE headers
+	// Set SSE headers BEFORE any write — this also tells chi's Compress
+	// middleware not to compress this response (it skips when Content-Type
+	// is not compressible or when Content-Encoding is already set).
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // Disable NGINX buffering
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
+	// Use http.NewResponseController (Go 1.20+) which can unwrap nested
+	// writers (e.g. from Compress middleware) to find the underlying Flusher.
+	rc := http.NewResponseController(w)
+
+	// Verify we can flush by attempting one flush
+	if err := rc.Flush(); err != nil {
 		Error(w, http.StatusInternalServerError, "Streaming not supported")
 		return
 	}
 
+	// flushFn wraps rc.Flush for convenience
+	flushFn := func() { _ = rc.Flush() }
+
 	// Send initial event
-	sendSSE(w, flusher, "status", `{"step":"starting","message":"Starting panel update..."}`)
+	sendSSErc(w, flushFn, "status", `{"step":"starting","message":"Starting panel update..."}`)
 
 	// Run update script
 	scriptPath := h.cfg.ScriptsDir + "/update_panel.sh"
@@ -169,12 +178,12 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	cmd.Stderr = cmd.Stdout
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
-		sendSSE(w, flusher, "error", `{"message":"Failed to create output pipe"}`)
+		sendSSErc(w, flushFn, "error", `{"message":"Failed to create output pipe"}`)
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		sendSSE(w, flusher, "error", fmt.Sprintf(`{"message":"Failed to start update: %s"}`, err.Error()))
+		sendSSErc(w, flushFn, "error", fmt.Sprintf(`{"message":"Failed to start update: %s"}`, err.Error()))
 		return
 	}
 
@@ -186,17 +195,17 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		data, _ := json.Marshal(map[string]string{"line": line})
-		sendSSE(w, flusher, "log", string(data))
+		sendSSErc(w, flushFn, "log", string(data))
 	}
 
 	// Wait for process to finish
 	err = cmd.Wait()
 	if err != nil {
 		data, _ := json.Marshal(map[string]string{"message": "Update failed: " + err.Error()})
-		sendSSE(w, flusher, "error", string(data))
+		sendSSErc(w, flushFn, "error", string(data))
 		log.Printf("Panel update failed: %v", err)
 	} else {
-		sendSSE(w, flusher, "complete", `{"message":"Update completed successfully! Your apps were not affected."}`)
+		sendSSErc(w, flushFn, "complete", `{"message":"Update completed successfully! Your apps were not affected."}`)
 		log.Println("Panel update completed successfully")
 	}
 }
@@ -223,10 +232,10 @@ func (h *UpdateHandler) Log(w http.ResponseWriter, r *http.Request) {
 	Success(w, map[string]string{"log": strings.Join(lines, "\n")})
 }
 
-// sendSSE sends a Server-Sent Event
-func sendSSE(w http.ResponseWriter, flusher http.Flusher, event, data string) {
+// sendSSErc sends a Server-Sent Event using a flush function (works with wrapped writers)
+func sendSSErc(w http.ResponseWriter, flush func(), event, data string) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
-	flusher.Flush()
+	flush()
 }
 
 // countUserApps returns the number of running PM2 processes that are NOT panel-backend

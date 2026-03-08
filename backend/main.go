@@ -62,10 +62,9 @@ func main() {
 	// Create router
 	r := chi.NewRouter()
 
-	// Global middleware
+	// Global middleware (applied to all routes)
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Recoverer)
-	r.Use(chimw.Compress(5))
 
 	// CORS
 	r.Use(cors.Handler(cors.Options{
@@ -91,6 +90,7 @@ func main() {
 
 	// Auth routes (no auth middleware)
 	r.Route("/api/auth", func(r chi.Router) {
+		r.Use(chimw.Compress(5))
 		// Login rate limit: 10 req / 15 min
 		r.With(httprate.LimitByIP(10, 15*time.Minute)).Post("/login", authHandler.Login)
 		r.Post("/logout", authHandler.Logout)
@@ -102,50 +102,59 @@ func main() {
 		r.Use(middleware.Auth(cfg.JWTSecret))
 		r.Use(middleware.Audit(db))
 
-		// Apps
-		r.Get("/apps", appsHandler.List)
-		r.Post("/apps", appsHandler.Create)
-		r.Get("/apps/{name}", appsHandler.Get)
-		r.Post("/apps/{name}/action", appsHandler.Action)
-		r.Put("/apps/{name}/env", appsHandler.UpdateEnv)
+		// Compressed JSON routes
+		r.Group(func(r chi.Router) {
+			r.Use(chimw.Compress(5))
 
-		// Domains
-		r.Post("/domains", domainsHandler.Add)
-		r.Delete("/domains/{domain}", domainsHandler.Remove)
+			// Apps
+			r.Get("/apps", appsHandler.List)
+			r.Post("/apps", appsHandler.Create)
+			r.Get("/apps/{name}", appsHandler.Get)
+			r.Post("/apps/{name}/action", appsHandler.Action)
+			r.Put("/apps/{name}/env", appsHandler.UpdateEnv)
 
-		// SSL
-		r.Post("/ssl", sslHandler.Enable)
+			// Domains
+			r.Post("/domains", domainsHandler.Add)
+			r.Delete("/domains/{domain}", domainsHandler.Remove)
 
-		// Databases
-		r.Get("/databases", dbHandler.List)
-		r.Post("/databases", dbHandler.Create)
-		r.Delete("/databases/{name}", dbHandler.Delete)
-		r.Get("/databases/stats", dbHandler.Stats)
-		r.Get("/databases/{name}/backup", dbHandler.Backup)
-		r.Post("/databases/{name}/restore", dbHandler.Restore)
+			// SSL
+			r.Post("/ssl", sslHandler.Enable)
 
-		// Redis
-		r.Get("/redis", redisHandler.Status)
-		r.Post("/redis/install", redisHandler.Install)
-		r.Get("/redis/stats", redisHandler.Stats)
+			// Databases
+			r.Get("/databases", dbHandler.List)
+			r.Post("/databases", dbHandler.Create)
+			r.Delete("/databases/{name}", dbHandler.Delete)
+			r.Get("/databases/stats", dbHandler.Stats)
+			r.Post("/databases/{name}/restore", dbHandler.Restore)
 
-		// Files
-		r.Get("/files/{app}", filesHandler.List)
-		r.Get("/files/{app}/content", filesHandler.GetContent)
-		r.Put("/files/{app}/content", filesHandler.SaveContent)
-		r.Post("/files/{app}/upload", filesHandler.Upload)
+			// Redis
+			r.Get("/redis", redisHandler.Status)
+			r.Post("/redis/install", redisHandler.Install)
+			r.Get("/redis/stats", redisHandler.Stats)
 
-		// Logs
-		r.Get("/logs/app/{name}", logsHandler.AppLogs)
-		r.Get("/logs/nginx", logsHandler.NginxLogs)
+			// Files
+			r.Get("/files/{app}", filesHandler.List)
+			r.Get("/files/{app}/content", filesHandler.GetContent)
+			r.Put("/files/{app}/content", filesHandler.SaveContent)
+			r.Post("/files/{app}/upload", filesHandler.Upload)
 
-		// Stats
-		r.Get("/stats", statsHandler.Get)
+			// Logs
+			r.Get("/logs/app/{name}", logsHandler.AppLogs)
+			r.Get("/logs/nginx", logsHandler.NginxLogs)
 
-		// Panel Update
-		r.Get("/update/check", updateHandler.Check)
+			// Stats
+			r.Get("/stats", statsHandler.Get)
+
+			// Panel Update (check + log are normal JSON)
+			r.Get("/update/check", updateHandler.Check)
+			r.Get("/update/log", updateHandler.Log)
+		})
+
+		// SSE / streaming endpoints — registered WITHOUT Compress middleware.
+		// Gzip compression wraps the ResponseWriter and breaks http.Flusher
+		// which is required for Server-Sent Events and streamed file downloads.
 		r.Post("/update/apply", updateHandler.Apply)
-		r.Get("/update/log", updateHandler.Log)
+		r.Get("/databases/{name}/backup", dbHandler.Backup)
 	})
 
 	// Server setup
