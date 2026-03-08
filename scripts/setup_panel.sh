@@ -417,8 +417,7 @@ cat > /etc/nginx/conf.d/security.conf <<'NGINXSEC'
 # Hide NGINX version
 server_tokens off;
 
-# Security headers
-add_header X-Frame-Options "DENY" always;
+# Security headers (X-Frame-Options omitted — apps control it per-route for embed support)
 add_header X-Content-Type-Options "nosniff" always;
 add_header X-XSS-Protection "1; mode=block" always;
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
