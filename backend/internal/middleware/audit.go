@@ -23,7 +23,9 @@ var sensitiveKeys = map[string]bool{
 	"new_password":     true,
 }
 
-// statusRecorder wraps ResponseWriter to capture status code
+// statusRecorder wraps ResponseWriter to capture status code.
+// It implements Unwrap() so http.NewResponseController can find
+// the underlying Flusher (required for SSE streaming).
 type statusRecorder struct {
 	http.ResponseWriter
 	statusCode int
@@ -32,6 +34,12 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.statusCode = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap returns the underlying ResponseWriter so that
+// http.NewResponseController can locate the http.Flusher interface.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }
 
 // Audit middleware logs POST/PUT/DELETE/PATCH requests
