@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -348,7 +350,7 @@ func (h *DatabasesHandler) Backup(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Restore handles POST /api/databases/{name}/restore — restores a SQL dump into the database
+// Restore handles POST /api/databases/{name}/restore — restores a SQL or custom-format dump
 func (h *DatabasesHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
@@ -372,8 +374,8 @@ func (h *DatabasesHandler) Restore(w http.ResponseWriter, r *http.Request) {
 
 	// Validate file extension
 	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext != ".sql" && ext != ".dump" && ext != ".bak" {
-		Error(w, http.StatusBadRequest, "Only .sql, .dump, and .bak files are supported")
+	if ext != ".sql" && ext != ".dump" && ext != ".bak" && ext != ".backup" {
+		Error(w, http.StatusBadRequest, "Only .sql, .dump, .bak, and .backup files are supported")
 		return
 	}
 
@@ -389,30 +391,86 @@ func (h *DatabasesHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build connection URI for psql
-	// Use ON_ERROR_STOP=1 so psql exits non-zero on the first real error
 	connURI := fmt.Sprintf("postgresql://%s:%s@%s:5432/%s", dbUser, password, h.cfg.DBHost, name)
 
-	// Pipe the uploaded file into psql to restore
-	result, err := h.exec.RunBinWithStdin(file, "psql", "-v", "ON_ERROR_STOP=1", connURI)
-	if err != nil {
-		Error(w, http.StatusInternalServerError, fmt.Sprintf("Restore failed: %v", err))
-		return
+	// Detect dump format by reading the first 5 bytes.
+	// PostgreSQL custom-format dumps start with magic bytes "PGDMP".
+	// pg_restore requires a seekable file, so for custom-format we save to a temp file.
+	header5 := make([]byte, 5)
+	n, _ := io.ReadFull(file, header5)
+	isCustomFormat := n == 5 && string(header5) == "PGDMP"
+
+	var result *models.ExecResult
+
+	if isCustomFormat {
+		// pg_restore needs a file on disk (can't read from stdin for custom format reliably).
+		// Save uploaded data to a temp file, then run pg_restore with the file path.
+		tmpFile, err := os.CreateTemp("", "restore-*.dump")
+		if err != nil {
+			Error(w, http.StatusInternalServerError, "Failed to create temp file")
+			return
+		}
+		tmpPath := tmpFile.Name()
+		defer os.Remove(tmpPath)
+
+		// Write the 5 header bytes we already read, then the rest
+		tmpFile.Write(header5[:n])
+		if _, err := io.Copy(tmpFile, file); err != nil {
+			tmpFile.Close()
+			Error(w, http.StatusInternalServerError, "Failed to save uploaded file")
+			return
+		}
+		tmpFile.Close()
+
+		// Run pg_restore: --no-owner --no-acl to skip ownership, --dbname for target
+		result, err = h.exec.RunBin("pg_restore",
+			"--no-owner", "--no-acl",
+			"--dbname", connURI,
+			tmpPath)
+		if err != nil {
+			Error(w, http.StatusInternalServerError, fmt.Sprintf("Restore failed: %v", err))
+			return
+		}
+	} else {
+		// Plain SQL format — pipe into psql
+		// Reconstruct the reader: the 5 bytes we peeked + the rest of the file
+		reader := io.MultiReader(
+			strings.NewReader(string(header5[:n])),
+			file,
+		)
+		result, err = h.exec.RunBinWithStdin(reader, "psql", "-v", "ON_ERROR_STOP=1", connURI)
+		if err != nil {
+			Error(w, http.StatusInternalServerError, fmt.Sprintf("Restore failed: %v", err))
+			return
+		}
 	}
 
 	// Collect error details from both stderr and stdout
-	// psql writes errors to stderr but notices/warnings can appear in either stream
 	errOutput := strings.TrimSpace(result.Stderr)
 	if errOutput == "" {
 		errOutput = strings.TrimSpace(result.Stdout)
 	}
 
 	if result.Code != 0 {
-		// Extract the most useful error lines from the output
 		errMsg := extractPsqlErrors(errOutput)
 		if errMsg == "" {
-			errMsg = fmt.Sprintf("psql exited with code %d. Check that the SQL file is valid and compatible with this database.", result.Code)
+			if isCustomFormat {
+				errMsg = fmt.Sprintf("pg_restore exited with code %d. Check that the dump is compatible with this database.", result.Code)
+			} else {
+				errMsg = fmt.Sprintf("psql exited with code %d. Check that the SQL file is valid and compatible with this database.", result.Code)
+			}
 		}
+
+		// pg_restore exit code 1 means "completed with warnings" (e.g. "already exists" errors).
+		// Only truly fatal if the error output contains FATAL or connection-level errors.
+		if isCustomFormat && result.Code == 1 && !containsFatalErrors(errOutput) {
+			Success(w, map[string]string{
+				"message":  "Database " + name + " restored with warnings",
+				"warnings": errMsg,
+			})
+			return
+		}
+
 		Error(w, http.StatusInternalServerError, errMsg)
 		return
 	}
@@ -481,6 +539,16 @@ func containsPsqlErrors(output string) bool {
 	return strings.Contains(lower, "error") ||
 		strings.Contains(lower, "fatal") ||
 		strings.Contains(lower, "could not")
+}
+
+// containsFatalErrors checks if output contains truly fatal errors (not just warnings)
+func containsFatalErrors(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "fatal") ||
+		strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "password authentication failed") ||
+		strings.Contains(lower, "no such file") ||
+		strings.Contains(lower, "not a valid archive")
 }
 
 func formatPgUptime(totalSecs int) string {

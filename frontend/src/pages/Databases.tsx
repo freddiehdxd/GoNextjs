@@ -630,7 +630,7 @@ export default function DatabasesPage() {
               <label className="label">SQL Dump File</label>
               <input
                 type="file"
-                accept=".sql,.dump,.backup,.gz"
+                accept=".sql,.dump,.bak,.backup"
                 className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border file:border-white/10 file:text-sm file:font-medium file:bg-white/5 file:text-gray-300 hover:file:bg-white/10 file:cursor-pointer file:transition-all"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
