@@ -1,4 +1,4 @@
-# ServerPanel — Self-Hosted Deployment Control Panel
+# GoNextjs — Self-Hosted Deployment Control Panel
 
 A lightweight, production-safe server control panel for deploying and managing
 web applications on a single Ubuntu 22.04+ server. Built with a Go backend and
