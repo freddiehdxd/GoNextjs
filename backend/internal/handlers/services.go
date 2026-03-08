@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -63,11 +64,13 @@ func (h *ServicesHandler) Restart(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.exec.RunBin("systemctl", "restart", name)
 	if err != nil {
-		Error(w, 500, "Failed to restart service: "+err.Error())
+		log.Printf("Failed to restart service %s: %v", name, err)
+		Error(w, 500, "Failed to restart service")
 		return
 	}
 	if res.Code != 0 {
-		Error(w, 500, "Restart failed: "+strings.TrimSpace(res.Stderr))
+		log.Printf("Restart failed for %s: %s", name, strings.TrimSpace(res.Stderr))
+		Error(w, 500, "Failed to restart service")
 		return
 	}
 
@@ -87,11 +90,13 @@ func (h *ServicesHandler) Stop(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.exec.RunBin("systemctl", "stop", name)
 	if err != nil {
-		Error(w, 500, "Failed to stop service: "+err.Error())
+		log.Printf("Failed to stop service %s: %v", name, err)
+		Error(w, 500, "Failed to stop service")
 		return
 	}
 	if res.Code != 0 {
-		Error(w, 500, "Stop failed: "+strings.TrimSpace(res.Stderr))
+		log.Printf("Stop failed for %s: %s", name, strings.TrimSpace(res.Stderr))
+		Error(w, 500, "Failed to stop service")
 		return
 	}
 
@@ -111,11 +116,13 @@ func (h *ServicesHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.exec.RunBin("systemctl", "start", name)
 	if err != nil {
-		Error(w, 500, "Failed to start service: "+err.Error())
+		log.Printf("Failed to start service %s: %v", name, err)
+		Error(w, 500, "Failed to start service")
 		return
 	}
 	if res.Code != 0 {
-		Error(w, 500, "Start failed: "+strings.TrimSpace(res.Stderr))
+		log.Printf("Start failed for %s: %s", name, strings.TrimSpace(res.Stderr))
+		Error(w, 500, "Failed to start service")
 		return
 	}
 

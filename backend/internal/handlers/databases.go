@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -119,7 +120,8 @@ func (h *DatabasesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	_, err = h.db.Exec(ctx,
 		fmt.Sprintf(`CREATE USER "%s" WITH PASSWORD '%s'`, body.User, password))
 	if err != nil {
-		Error(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create user: %v", err))
+		log.Printf("Failed to create PostgreSQL user %s: %v", body.User, err)
+		Error(w, http.StatusInternalServerError, "Failed to create database user")
 		return
 	}
 
@@ -130,7 +132,8 @@ func (h *DatabasesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Rollback: drop user
 		h.db.Exec(ctx, fmt.Sprintf(`DROP USER IF EXISTS "%s"`, body.User))
-		Error(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create database: %v", err))
+		log.Printf("Failed to create PostgreSQL database %s: %v", body.Name, err)
+		Error(w, http.StatusInternalServerError, "Failed to create database")
 		return
 	}
 
@@ -343,9 +346,10 @@ func (h *DatabasesHandler) Backup(w http.ResponseWriter, r *http.Request) {
 
 	// Stream pg_dump output directly to the response writer
 	if err := h.exec.RunBinStream(w, "pg_dump", "--no-owner", "--no-acl", connURI); err != nil {
+		log.Printf("Backup failed for database %s: %v", name, err)
 		// If headers already sent we can't change status, but if nothing written yet we can error
 		// In practice pg_dump either fails fast (bad connection) or streams data
-		http.Error(w, fmt.Sprintf("Backup failed: %v", err), http.StatusInternalServerError)
+		http.Error(w, "Backup failed", http.StatusInternalServerError)
 		return
 	}
 }
@@ -432,7 +436,8 @@ func (h *DatabasesHandler) Restore(w http.ResponseWriter, r *http.Request) {
 			"--dbname", connURI,
 			tmpPath)
 		if err != nil {
-			Error(w, http.StatusInternalServerError, fmt.Sprintf("Restore failed: %v", err))
+			log.Printf("pg_restore failed for database %s: %v", name, err)
+			Error(w, http.StatusInternalServerError, "Restore failed")
 			return
 		}
 	} else {
@@ -444,7 +449,8 @@ func (h *DatabasesHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		)
 		result, err = h.exec.RunBinWithStdin(reader, "psql", "-v", "ON_ERROR_STOP=1", connURI)
 		if err != nil {
-			Error(w, http.StatusInternalServerError, fmt.Sprintf("Restore failed: %v", err))
+			log.Printf("psql restore failed for database %s: %v", name, err)
+			Error(w, http.StatusInternalServerError, "Restore failed")
 			return
 		}
 	}

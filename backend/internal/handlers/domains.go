@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -74,7 +75,8 @@ func (h *DomainsHandler) Add(w http.ResponseWriter, r *http.Request) {
 		if oldConfig != "" && app.Domain != nil {
 			h.nginx.RestoreConfig(*app.Domain, oldConfig)
 		}
-		Error(w, http.StatusInternalServerError, err.Error())
+		log.Printf("Failed to write NGINX config for %s: %v", body.Domain, err)
+		Error(w, http.StatusInternalServerError, "Failed to configure NGINX for domain")
 		return
 	}
 
@@ -86,7 +88,8 @@ func (h *DomainsHandler) Add(w http.ResponseWriter, r *http.Request) {
 			h.nginx.RestoreConfig(*app.Domain, oldConfig)
 			h.nginx.TestAndReload() // best effort reload with old config
 		}
-		Error(w, http.StatusInternalServerError, err.Error())
+		log.Printf("NGINX reload failed for domain %s: %v", body.Domain, err)
+		Error(w, http.StatusInternalServerError, "NGINX configuration test failed, changes rolled back")
 		return
 	}
 
@@ -111,6 +114,11 @@ func (h *DomainsHandler) Add(w http.ResponseWriter, r *http.Request) {
 // Remove handles DELETE /api/domains/:domain
 func (h *DomainsHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	domain := chi.URLParam(r, "domain")
+
+	if !services.ValidateDomain(domain) {
+		Error(w, http.StatusBadRequest, "Invalid domain name")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()

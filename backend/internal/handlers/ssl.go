@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
@@ -71,17 +72,15 @@ func (h *SSLHandler) Enable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if result.Code != 0 {
-		msg := result.Stderr
-		if msg == "" {
-			msg = "SSL script failed"
-		}
-		Error(w, http.StatusInternalServerError, msg)
+		log.Printf("SSL script failed for %s: %s", domain, result.Stderr)
+		Error(w, http.StatusInternalServerError, "SSL certificate issuance failed. Check that the domain points to this server.")
 		return
 	}
 
 	// Rewrite NGINX config with SSL enabled
 	if err := h.nginx.WriteConfig(domain, app.Port, true); err != nil {
-		Error(w, http.StatusInternalServerError, err.Error())
+		log.Printf("Failed to write NGINX SSL config for %s: %v", domain, err)
+		Error(w, http.StatusInternalServerError, "Failed to configure NGINX for SSL")
 		return
 	}
 
@@ -90,7 +89,8 @@ func (h *SSLHandler) Enable(w http.ResponseWriter, r *http.Request) {
 		// Rollback to HTTP-only config
 		h.nginx.WriteConfig(domain, app.Port, false)
 		h.nginx.TestAndReload()
-		Error(w, http.StatusInternalServerError, err.Error())
+		log.Printf("NGINX reload failed after SSL enable for %s: %v", domain, err)
+		Error(w, http.StatusInternalServerError, "NGINX configuration test failed, changes rolled back")
 		return
 	}
 
@@ -141,7 +141,8 @@ func (h *SSLHandler) Disable(w http.ResponseWriter, r *http.Request) {
 
 	// Rewrite NGINX config without SSL (HTTP-only proxy)
 	if err := h.nginx.WriteConfig(domain, app.Port, false); err != nil {
-		Error(w, http.StatusInternalServerError, err.Error())
+		log.Printf("Failed to write NGINX config for %s: %v", domain, err)
+		Error(w, http.StatusInternalServerError, "Failed to update NGINX configuration")
 		return
 	}
 
@@ -150,7 +151,8 @@ func (h *SSLHandler) Disable(w http.ResponseWriter, r *http.Request) {
 		// Rollback to SSL config
 		h.nginx.WriteConfig(domain, app.Port, true)
 		h.nginx.TestAndReload()
-		Error(w, http.StatusInternalServerError, err.Error())
+		log.Printf("NGINX reload failed after SSL disable for %s: %v", domain, err)
+		Error(w, http.StatusInternalServerError, "NGINX configuration test failed, changes rolled back")
 		return
 	}
 

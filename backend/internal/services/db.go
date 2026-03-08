@@ -49,53 +49,120 @@ func NewDB(databaseURL string) (*DB, error) {
 	return &DB{Pool: pool}, nil
 }
 
-// InitSchema creates tables if they don't exist and runs cleanup
+// migrations is an ordered list of schema migrations. Each migration runs once.
+// To add a new migration, append to this slice with the next version number.
+// NEVER modify or reorder existing migrations — only append new ones.
+var migrations = []struct {
+	version     int
+	description string
+	sql         string
+}{
+	{
+		version:     1,
+		description: "Initial schema: apps, managed_databases, audit_log",
+		sql: `
+			CREATE TABLE IF NOT EXISTS apps (
+				id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				name        TEXT UNIQUE NOT NULL,
+				repo_url    TEXT NOT NULL,
+				branch      TEXT NOT NULL DEFAULT 'main',
+				port        INTEGER UNIQUE NOT NULL,
+				domain      TEXT,
+				ssl_enabled BOOLEAN NOT NULL DEFAULT false,
+				env_vars    JSONB NOT NULL DEFAULT '{}',
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			CREATE TABLE IF NOT EXISTS managed_databases (
+				id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				name       TEXT UNIQUE NOT NULL,
+				db_user    TEXT UNIQUE NOT NULL,
+				password   TEXT NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			CREATE TABLE IF NOT EXISTS audit_log (
+				id          BIGSERIAL PRIMARY KEY,
+				username    TEXT NOT NULL,
+				ip          TEXT NOT NULL,
+				method      TEXT NOT NULL,
+				path        TEXT NOT NULL,
+				status_code INTEGER NOT NULL DEFAULT 0,
+				duration_ms INTEGER NOT NULL DEFAULT 0,
+				body        JSONB DEFAULT '{}',
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at);
+		`,
+	},
+	// To add a new migration, append here:
+	// {
+	//     version:     2,
+	//     description: "Add new_column to apps",
+	//     sql:         `ALTER TABLE apps ADD COLUMN IF NOT EXISTS new_column TEXT;`,
+	// },
+}
+
+// InitSchema runs all pending migrations in order and performs cleanup.
 func (db *DB) InitSchema(ctx context.Context) error {
-	schema := `
-		CREATE TABLE IF NOT EXISTS apps (
-			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			name        TEXT UNIQUE NOT NULL,
-			repo_url    TEXT NOT NULL,
-			branch      TEXT NOT NULL DEFAULT 'main',
-			port        INTEGER UNIQUE NOT NULL,
-			domain      TEXT,
-			ssl_enabled BOOLEAN NOT NULL DEFAULT false,
-			env_vars    JSONB NOT NULL DEFAULT '{}',
-			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-
-		CREATE TABLE IF NOT EXISTS managed_databases (
-			id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			name       TEXT UNIQUE NOT NULL,
-			db_user    TEXT UNIQUE NOT NULL,
-			password   TEXT NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-
-		CREATE TABLE IF NOT EXISTS audit_log (
-			id          BIGSERIAL PRIMARY KEY,
-			username    TEXT NOT NULL,
-			ip          TEXT NOT NULL,
-			method      TEXT NOT NULL,
-			path        TEXT NOT NULL,
-			status_code INTEGER NOT NULL DEFAULT 0,
-			duration_ms INTEGER NOT NULL DEFAULT 0,
-			body        JSONB DEFAULT '{}',
-			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at);
-
-		DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL '90 days';
-	`
-
-	_, err := db.Pool.Exec(ctx, schema)
+	// Create migrations tracking table
+	_, err := db.Pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version     INTEGER PRIMARY KEY,
+			description TEXT NOT NULL,
+			applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
 	if err != nil {
-		return fmt.Errorf("init schema: %w", err)
+		return fmt.Errorf("create migrations table: %w", err)
 	}
 
-	log.Println("Database schema initialized")
+	// Get current version
+	var currentVersion int
+	err = db.Pool.QueryRow(ctx,
+		"SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&currentVersion)
+	if err != nil {
+		return fmt.Errorf("check migration version: %w", err)
+	}
+
+	// Run pending migrations
+	applied := 0
+	for _, m := range migrations {
+		if m.version <= currentVersion {
+			continue
+		}
+
+		log.Printf("Running migration %d: %s", m.version, m.description)
+
+		if _, err := db.Pool.Exec(ctx, m.sql); err != nil {
+			return fmt.Errorf("migration %d failed: %w", m.version, err)
+		}
+
+		if _, err := db.Pool.Exec(ctx,
+			"INSERT INTO schema_migrations (version, description) VALUES ($1, $2)",
+			m.version, m.description); err != nil {
+			return fmt.Errorf("record migration %d: %w", m.version, err)
+		}
+
+		applied++
+	}
+
+	if applied > 0 {
+		log.Printf("Applied %d migration(s), now at version %d", applied, migrations[len(migrations)-1].version)
+	} else {
+		log.Printf("Database schema up to date (version %d)", currentVersion)
+	}
+
+	// Periodic cleanup: remove old audit log entries (> 90 days)
+	result, err := db.Pool.Exec(ctx, "DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL '90 days'")
+	if err == nil {
+		if count := result.RowsAffected(); count > 0 {
+			log.Printf("Cleaned up %d old audit log entries", count)
+		}
+	}
+
 	return nil
 }
 

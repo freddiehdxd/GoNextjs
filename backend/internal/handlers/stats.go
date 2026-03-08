@@ -112,7 +112,11 @@ func NewStatsHandler(pm2 *services.PM2, cfg *config.Config, db *services.DB) *St
 		clients: make(map[*websocket.Conn]struct{}),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
-				return true // behind NGINX, always local
+				origin := r.Header.Get("Origin")
+				if origin == "" {
+					return true // non-browser clients (curl, etc.)
+				}
+				return origin == cfg.PanelOrigin
 			},
 			ReadBufferSize:  1024,
 			WriteBufferSize: 4096,

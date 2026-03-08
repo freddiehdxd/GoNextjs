@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -249,7 +250,8 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 	case "start", "stop", "restart":
 		result, err := h.pm2.Action(body.Action, app.Name)
 		if err != nil {
-			Error(w, http.StatusInternalServerError, err.Error())
+			log.Printf("PM2 %s failed for %s: %v", body.Action, app.Name, err)
+			Error(w, http.StatusInternalServerError, "Failed to "+body.Action+" app")
 			return
 		}
 		Success(w, map[string]string{"message": result.Stdout})
@@ -302,7 +304,8 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 		result, err := h.exec.RunScript("setup_app.sh",
 			app.Name, fmt.Sprintf("%d", app.Port))
 		if err != nil {
-			Error(w, http.StatusInternalServerError, "Setup failed: "+err.Error())
+			log.Printf("Setup failed for %s: %v", app.Name, err)
+			Error(w, http.StatusInternalServerError, "Setup failed")
 			return
 		}
 		if result.Code != 0 {

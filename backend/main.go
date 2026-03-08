@@ -200,7 +200,6 @@ func main() {
 		log.Printf("Shutdown error: %v", err)
 	}
 
-	db.Close()
 	log.Println("Server stopped")
 }
 

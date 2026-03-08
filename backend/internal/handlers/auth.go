@@ -124,7 +124,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Value:    tokenStr,
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   cookieMaxAge,
 		Path:     "/",
 	})
@@ -139,7 +139,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 		Path:     "/",
 	})
@@ -184,7 +184,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 			Value:    "",
 			HttpOnly: true,
 			Secure:   h.cfg.CookieSecure,
-			SameSite: http.SameSiteLaxMode,
+			SameSite: http.SameSiteStrictMode,
 			MaxAge:   -1,
 			Path:     "/",
 		})
