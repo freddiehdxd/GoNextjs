@@ -105,3 +105,63 @@ func (h *SSLHandler) Enable(w http.ResponseWriter, r *http.Request) {
 
 	Success(w, map[string]string{"message": "SSL enabled for " + domain})
 }
+
+// Disable handles POST /api/ssl/disable
+func (h *SSLHandler) Disable(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AppName string `json:"app_name"`
+	}
+	if err := ReadJSON(r, &body); err != nil || body.AppName == "" {
+		Error(w, http.StatusBadRequest, "app_name required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Get app
+	var app models.App
+	var envJSON interface{}
+	err := h.db.QueryRow(ctx,
+		"SELECT id, name, repo_url, branch, port, domain, ssl_enabled, env_vars, created_at, updated_at FROM apps WHERE name = $1",
+		body.AppName,
+	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
+		&app.Domain, &app.SSLEnabled, &envJSON, &app.CreatedAt, &app.UpdatedAt)
+	if err != nil {
+		Error(w, http.StatusNotFound, "App not found")
+		return
+	}
+
+	if app.Domain == nil || *app.Domain == "" {
+		Error(w, http.StatusBadRequest, "App has no domain assigned")
+		return
+	}
+
+	domain := *app.Domain
+
+	// Rewrite NGINX config without SSL (HTTP-only proxy)
+	if err := h.nginx.WriteConfig(domain, app.Port, false); err != nil {
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Test and reload NGINX
+	if err := h.nginx.TestAndReload(); err != nil {
+		// Rollback to SSL config
+		h.nginx.WriteConfig(domain, app.Port, true)
+		h.nginx.TestAndReload()
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Update database
+	_, err = h.db.Exec(ctx,
+		"UPDATE apps SET ssl_enabled = false, updated_at = NOW() WHERE name = $1",
+		body.AppName)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to update database")
+		return
+	}
+
+	Success(w, map[string]string{"message": "SSL disabled for " + domain})
+}

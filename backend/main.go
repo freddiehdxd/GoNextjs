@@ -121,6 +121,7 @@ func main() {
 
 			// SSL
 			r.Post("/ssl", sslHandler.Enable)
+			r.Post("/ssl/disable", sslHandler.Disable)
 
 			// Databases
 			r.Get("/databases", dbHandler.List)
