@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Shield, ShieldCheck, ShieldOff, Lock, CheckCircle2 } from 'lucide-react';
+import { Shield, ShieldCheck, ShieldOff, Lock, Unlock, CheckCircle2 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import Modal from '@/components/Modal';
 import { api, App } from '@/lib/api';
@@ -10,6 +10,8 @@ export default function SSLPage() {
   const [selected, setSelected] = useState<App | null>(null);
   const [email,    setEmail]    = useState('');
   const [issuing,  setIssuing]  = useState(false);
+  const [disabling, setDisabling] = useState<App | null>(null);
+  const [removing, setRemoving] = useState(false);
   const [error,    setError]    = useState('');
   const [success,  setSuccess]  = useState('');
 
@@ -32,6 +34,20 @@ export default function SSLPage() {
       await fetchApps();
     } else {
       setError(res.error ?? 'Failed to issue SSL certificate');
+    }
+  }
+
+  async function disableSSL() {
+    if (!disabling) return;
+    setRemoving(true); setError(''); setSuccess('');
+    const res = await api.post('/ssl/disable', { app_name: disabling.name });
+    setRemoving(false);
+    if (res.success) {
+      setSuccess(`SSL disabled for ${disabling.domain}`);
+      setDisabling(null);
+      await fetchApps();
+    } else {
+      setError(res.error ?? 'Failed to disable SSL');
     }
   }
 
@@ -123,17 +139,28 @@ export default function SSLPage() {
                   </div>
                 </div>
 
-                <button
-                  onClick={() => { setSelected(app); setError(''); setSuccess(''); }}
-                  disabled={app.ssl_enabled}
-                  className={app.ssl_enabled ? 'btn-success opacity-60 cursor-default' : 'btn-primary'}
-                >
+                <div className="flex items-center gap-2">
                   {app.ssl_enabled ? (
-                    <><ShieldCheck size={13} /> Secured</>
+                    <>
+                      <span className="btn-success opacity-60 cursor-default">
+                        <ShieldCheck size={13} /> Secured
+                      </span>
+                      <button
+                        onClick={() => { setDisabling(app); setError(''); setSuccess(''); }}
+                        className="btn-ghost text-xs !text-red-400 hover:!bg-red-500/10"
+                      >
+                        <Unlock size={12} /> Disable
+                      </button>
+                    </>
                   ) : (
-                    <><Lock size={13} /> Issue SSL</>
+                    <button
+                      onClick={() => { setSelected(app); setError(''); setSuccess(''); }}
+                      className="btn-primary"
+                    >
+                      <Lock size={13} /> Issue SSL
+                    </button>
                   )}
-                </button>
+                </div>
               </div>
             </div>
           ))}
@@ -177,6 +204,38 @@ export default function SSLPage() {
                   </span>
                 ) : (
                   <><ShieldCheck size={13} /> Issue Certificate</>
+                )}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {/* Disable SSL Modal */}
+      {disabling && (
+        <Modal title={`Disable SSL — ${disabling.domain}`} onClose={() => { setDisabling(null); setError(''); }}>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-red-500/15 bg-red-500/5 px-4 py-3">
+              <p className="text-sm text-gray-400">
+                This will revert <strong className="text-white">{disabling.domain}</strong> to HTTP-only.
+                The NGINX config will be rewritten without SSL. Existing certificates will remain on disk
+                but won't be used.
+              </p>
+            </div>
+
+            {error && (
+              <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400">{error}</div>
+            )}
+
+            <div className="flex gap-3 justify-end">
+              <button className="btn-ghost" onClick={() => { setDisabling(null); setError(''); }}>Cancel</button>
+              <button className="btn-danger" onClick={disableSSL} disabled={removing}>
+                {removing ? (
+                  <span className="flex items-center gap-2">
+                    <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                    Disabling...
+                  </span>
+                ) : (
+                  <><ShieldOff size={13} /> Disable SSL</>
                 )}
               </button>
             </div>
