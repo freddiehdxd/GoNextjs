@@ -112,7 +112,6 @@ func main() {
 			r.Get("/apps/{name}", appsHandler.Get)
 			r.Post("/apps/{name}/action", appsHandler.Action)
 			r.Put("/apps/{name}/env", appsHandler.UpdateEnv)
-			r.Post("/apps/{name}/upload-project", appsHandler.UploadProject)
 
 			// Domains
 			r.Post("/domains", domainsHandler.Add)
@@ -151,11 +150,12 @@ func main() {
 			r.Get("/update/log", updateHandler.Log)
 		})
 
-		// SSE / streaming endpoints — registered WITHOUT Compress middleware.
+		// SSE / streaming / large upload endpoints — registered WITHOUT Compress middleware.
 		// Gzip compression wraps the ResponseWriter and breaks http.Flusher
 		// which is required for Server-Sent Events and streamed file downloads.
 		r.Post("/update/apply", updateHandler.Apply)
 		r.Get("/databases/{name}/backup", dbHandler.Backup)
+		r.Post("/apps/{name}/upload", appsHandler.UploadProject)
 	})
 
 	// Server setup

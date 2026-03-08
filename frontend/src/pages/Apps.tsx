@@ -93,7 +93,7 @@ export default function AppsPage() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`/api/apps/${name}/upload-project`, {
+      const res = await fetch(`/api/apps/${name}/upload`, {
         method: 'POST',
         credentials: 'same-origin',
         body: fd,
