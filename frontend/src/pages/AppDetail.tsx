@@ -4,7 +4,7 @@ import {
   ArrowLeft, Play, Square, RotateCcw, Zap, Trash2, Globe, ExternalLink,
   GitBranch, Server, FolderArchive, Rocket, Plus, Check, Copy,
   Activity, ScrollText, Settings2, Upload, Clock, Cpu, MemoryStick,
-  ChevronDown, Pause,
+  ChevronDown, Pause, Eye, EyeOff,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import StatusBadge from '@/components/StatusBadge';
@@ -352,6 +352,17 @@ function ConfigTab({ app, onSaved }: { app: App; onSaved: () => void }) {
   const [loadingEnv, setLoadingEnv] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+  const [revealAll, setRevealAll] = useState(false);
+
+  function toggleReveal(idx: number) {
+    const key = `${idx}`;
+    setRevealedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   // Load env vars from disk files (.env + .env.local), falling back to DB
   useEffect(() => {
@@ -436,9 +447,16 @@ function ConfigTab({ app, onSaved }: { app: App; onSaved: () => void }) {
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-white">Environment Variables</h3>
-          <p className="text-[10px] text-gray-600">
-            Read from <code className="text-gray-500">.env</code> and <code className="text-gray-500">.env.local</code> on disk
-          </p>
+          <div className="flex items-center gap-3">
+            <button onClick={() => { setRevealAll(!revealAll); setRevealedKeys(new Set()); }}
+              className="flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-gray-300 transition-colors">
+              {revealAll ? <EyeOff size={12} /> : <Eye size={12} />}
+              {revealAll ? 'Hide all' : 'Reveal all'}
+            </button>
+            <p className="text-[10px] text-gray-600">
+              from <code className="text-gray-500">.env</code> / <code className="text-gray-500">.env.local</code>
+            </p>
+          </div>
         </div>
 
         {loadingEnv ? (
@@ -449,25 +467,32 @@ function ConfigTab({ app, onSaved }: { app: App; onSaved: () => void }) {
         ) : (
           <>
             <div className="space-y-2">
-              {entries.map((entry, i) => (
-                <div key={i} className="flex gap-2 items-center">
-                  <input className="input w-5/12 font-mono text-xs" placeholder="KEY" value={entry.key}
-                    onChange={e => { const n = [...entries]; n[i] = { ...n[i], key: e.target.value }; setEntries(n); }} />
-                  <input className="input flex-1 font-mono text-xs" placeholder="value" value={entry.value}
-                    onChange={e => { const n = [...entries]; n[i] = { ...n[i], value: e.target.value }; setEntries(n); }} />
-                  {entry.source && (
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ${
-                      entry.source === '.env.local'
-                        ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                        : 'bg-violet-500/10 text-violet-400 border border-violet-500/20'
-                    }`}>{entry.source}</span>
-                  )}
-                  <button onClick={() => { const n = entries.filter((_, j) => j !== i); setEntries(n.length ? n : [{ key: '', value: '' }]); }}
-                    className="p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0">
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              ))}
+              {entries.map((entry, i) => {
+                const isVisible = revealAll || revealedKeys.has(`${i}`);
+                return (
+                  <div key={i} className="flex gap-2 items-center">
+                    <input className="input w-5/12 font-mono text-xs" placeholder="KEY" value={entry.key}
+                      onChange={e => { const n = [...entries]; n[i] = { ...n[i], key: e.target.value }; setEntries(n); }} />
+                    <input type={isVisible ? 'text' : 'password'} className="input flex-1 font-mono text-xs" placeholder="value" value={entry.value}
+                      onChange={e => { const n = [...entries]; n[i] = { ...n[i], value: e.target.value }; setEntries(n); }} />
+                    <button onClick={() => toggleReveal(i)}
+                      className="p-1.5 rounded-lg text-gray-600 hover:text-gray-300 transition-all shrink-0" title={isVisible ? 'Hide' : 'Reveal'}>
+                      {isVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                    </button>
+                    {entry.source && (
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ${
+                        entry.source === '.env.local'
+                          ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                          : 'bg-violet-500/10 text-violet-400 border border-violet-500/20'
+                      }`}>{entry.source}</span>
+                    )}
+                    <button onClick={() => { const n = entries.filter((_, j) => j !== i); setEntries(n.length ? n : [{ key: '', value: '' }]); }}
+                      className="p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
             <div className="flex items-center gap-3 mt-3">
               <button onClick={() => setEntries([...entries, { key: '', value: '' }])} className="btn-ghost text-xs">
@@ -626,6 +651,7 @@ function DeploymentsTab({ app, onAction, acting, onRefresh }: {
 
 function EnvPreview({ appName }: { appName: string }) {
   const [envEntries, setEnvEntries] = useState<{ key: string; value: string; source: string }[]>([]);
+  const [revealed, setRevealed] = useState(false);
   useEffect(() => {
     (async () => {
       const res = await api.get<{ entries: { key: string; value: string; source: string }[] }>(`/apps/${appName}/env-file`);
@@ -636,13 +662,22 @@ function EnvPreview({ appName }: { appName: string }) {
   if (!envEntries.length) return null;
   return (
     <div className="card">
-      <h3 className="text-sm font-semibold text-white mb-3">Environment Variables</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-white">Environment Variables</h3>
+        <button onClick={() => setRevealed(!revealed)}
+          className="flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-gray-300 transition-colors">
+          {revealed ? <EyeOff size={12} /> : <Eye size={12} />}
+          {revealed ? 'Hide values' : 'Reveal values'}
+        </button>
+      </div>
       <div className="space-y-1.5">
         {envEntries.map(e => (
           <div key={e.key} className="flex items-center gap-2 text-xs">
             <code className="text-violet-400 font-mono">{e.key}</code>
             <span className="text-gray-700">=</span>
-            <code className="text-gray-400 font-mono truncate">{e.value}</code>
+            <code className="text-gray-400 font-mono truncate">
+              {revealed ? e.value : '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}
+            </code>
             <span className={`text-[9px] px-1 py-0.5 rounded ml-auto shrink-0 ${
               e.source === '.env.local'
                 ? 'bg-amber-500/10 text-amber-500'
