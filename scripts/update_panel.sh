@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # update_panel.sh — Zero-downtime panel self-update
+# v2.1 — fixed ELF check, improved reliability
 #
 # Safety guarantees:
 #   1. User apps (PM2 processes) are NEVER touched — only panel-backend is restarted
