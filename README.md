@@ -6,17 +6,26 @@ a Vite + React frontend for minimal resource usage (~15 MB RAM for the API).
 
 ## Features
 
-| Feature         | Details                                                   |
-|-----------------|-----------------------------------------------------------|
-| Authentication  | JWT-based admin login with bcrypt, rate limiting, lockout |
-| App Management  | Deploy via Git, build, start/stop/restart/delete with PM2 |
-| Domain Mgmt     | Auto-generate NGINX reverse-proxy configs                 |
-| SSL             | Let's Encrypt via Certbot, auto-renewal                   |
-| Databases       | Create PostgreSQL databases + users                       |
-| Redis           | Install + show connection info                            |
-| File Manager    | Browse, edit, upload files in `/var/www/apps`             |
-| Logs            | View PM2 and NGINX logs                                   |
-| System Stats    | Live CPU, memory, disk usage with ring gauges             |
+| Feature              | Details                                                                                                      |
+|----------------------|--------------------------------------------------------------------------------------------------------------|
+| Authentication       | JWT-based admin login with bcrypt, HttpOnly cookies, rate limiting (10 req/15 min), IP lockout after 5 fails, constant-time comparison to prevent timing attacks |
+| App Management       | Deploy via GitHub URL, Git URL, or manual ZIP upload; build, start/stop/restart/rebuild/delete with PM2; per-app detail page with tabbed UI (overview, logs, config, deployments); auto port allocation (3001-3999) |
+| Environment Vars     | Store env vars in DB, sync to `.env` on disk, read `.env` + `.env.local` with source tracking, auto-restart PM2 on change |
+| Domain Mgmt          | Auto-generate NGINX reverse-proxy configs with rollback on failure                                           |
+| SSL                  | Let's Encrypt via Certbot, auto-renewal, enable/disable SSL per domain                                      |
+| Databases            | Create/delete PostgreSQL databases + users, random password generation, connection string display            |
+| Database Monitoring  | Real-time PostgreSQL dashboard: version, uptime, connections by state, cache hit ratio, transaction stats, tuple ops, deadlocks, per-database stats, active/slow query list |
+| Database Backup      | Streaming `pg_dump` download (no temp files), restore from SQL or custom-format dumps (up to 500 MB), auto-detection of dump format |
+| Redis                | Install, status check, connection info display                                                               |
+| Redis Monitoring     | Real-time Redis dashboard: version, uptime, ops/sec, memory/fragmentation, hit rate, evicted keys, RDB persistence info, per-database keyspace analysis |
+| System Services      | Manage 8 systemd services (NGINX, Redis, PostgreSQL, PM2, SSH, UFW, Fail2Ban, Cron): start/stop/restart, view status, PID, memory usage |
+| File Manager         | Browse, edit, upload files in `/var/www/apps` with path traversal protection                                 |
+| Logs                 | View PM2 stdout/stderr logs and NGINX access/error logs; direct log file reading, configurable line count, syntax highlighting, auto-scroll with pause/resume |
+| System Stats         | Live CPU (aggregate + per-core), memory, disk, network I/O, disk I/O, load average, hostname, uptime, top PM2 processes; sparkline history (60 data points) |
+| WebSocket Live Stats | Real-time stats pushed every 2 seconds via WebSocket with HTTP polling fallback, JWT auth, ping/pong keep-alive, smart collection (only when clients connected) |
+| Panel Self-Update    | One-click updates with SSE-streamed progress, version check against GitHub remote, commit changelog, concurrent update prevention, update log history |
+| Command Palette      | `Ctrl+K` / `Cmd+K` quick navigation to any page                                                             |
+| Audit Logging        | All POST/PUT/DELETE requests logged to the database                                                          |
 
 ## Stack
 
@@ -61,7 +70,7 @@ panel/
 │   ├── go.mod                     Module dependencies
 │   └── internal/
 │       ├── config/config.go       Environment variable loading + validation
-│       ├── models/models.go       App, Database, AuditEntry, Stats structs
+│       ├── models/models.go       App, Database, AuditEntry, Stats, PgOverview, RedisStats structs
 │       ├── middleware/
 │       │   ├── auth.go            JWT cookie/header verification, context user
 │       │   ├── audit.go           POST/PUT/DELETE audit logging
@@ -69,14 +78,16 @@ panel/
 │       ├── handlers/
 │       │   ├── helpers.go         JSON response + request helpers
 │       │   ├── auth.go            Login (lockout, bcrypt), logout, me
-│       │   ├── apps.go            CRUD, deploy, PM2 actions, env vars
+│       │   ├── apps.go            CRUD, deploy, PM2 actions, env vars, ZIP upload
 │       │   ├── domains.go         Add/remove domain + NGINX rollback
-│       │   ├── ssl.go             Certbot + NGINX SSL config
-│       │   ├── databases.go       PostgreSQL user/db CRUD
-│       │   ├── redis.go           Status check + install
+│       │   ├── ssl.go             Certbot enable/disable + NGINX SSL config
+│       │   ├── databases.go       PostgreSQL CRUD, monitoring dashboard, backup/restore
+│       │   ├── redis.go           Status, install, monitoring dashboard
+│       │   ├── services.go        Systemd service management (start/stop/restart)
 │       │   ├── files.go           Browse, read, write, upload
-│       │   ├── logs.go            PM2 logs + NGINX tail
-│       │   └── stats.go           Background /proc collector (10s goroutine)
+│       │   ├── logs.go            PM2 logs + NGINX tail + direct file read
+│       │   ├── stats.go           /proc collector, WebSocket live stats, ring buffer history
+│       │   └── update.go          Panel version check + SSE-streamed update apply
 │       └── services/
 │           ├── db.go              pgx connection pool, schema init
 │           ├── executor.go        Allowlisted command runner with timeouts
@@ -90,32 +101,40 @@ panel/
 │   ├── tailwind.config.ts
 │   └── src/
 │       ├── main.tsx               ReactDOM + BrowserRouter
-│       ├── App.tsx                Routes + ProtectedRoute (checks /api/auth/me)
+│       ├── App.tsx                Routes + ProtectedRoute (auth context with 5-min cache)
 │       ├── index.css              Tailwind + custom styles
 │       ├── lib/api.ts             Fetch wrapper with credentials
 │       ├── components/
 │       │   ├── Shell.tsx          Layout wrapper
-│       │   ├── Nav.tsx            Sidebar navigation
+│       │   ├── Nav.tsx            Sidebar navigation + Ctrl+K command palette
 │       │   ├── Modal.tsx          Reusable modal
 │       │   └── StatusBadge.tsx    Status indicator
 │       └── pages/
 │           ├── Login.tsx          Login form
-│           ├── Dashboard.tsx      Ring gauges, stats, app table
+│           ├── Dashboard.tsx      Ring gauges, sparkline charts, WebSocket live stats
 │           ├── Apps.tsx           Deploy modal, env editor, PM2 actions
+│           ├── AppDetail.tsx      Per-app detail page (overview, logs, config, deployments)
 │           ├── Domains.tsx        Domain management
-│           ├── SSL.tsx            Certificate issuance
-│           ├── Databases.tsx      PostgreSQL CRUD
-│           ├── Redis.tsx          Status + install
+│           ├── SSL.tsx            Certificate issuance + disable
+│           ├── Databases.tsx      PostgreSQL CRUD + monitoring dashboard + backup/restore
+│           ├── Redis.tsx          Status, install, monitoring dashboard
+│           ├── Services.tsx       System services management (8 services)
 │           ├── Files.tsx          File browser + editor
-│           ├── Logs.tsx           Log viewer with syntax coloring
+│           ├── Logs.tsx           Log viewer with syntax coloring + auto-scroll
+│           ├── Settings.tsx       Panel self-update + system info
 │           └── NotFound.tsx       404 page
 ├── scripts/                       Bash automation
 │   ├── setup_panel.sh             One-shot server setup
-│   ├── install_nginx.sh
-│   ├── install_postgres.sh
-│   ├── install_redis.sh
-│   ├── deploy_next_app.sh
-│   └── create_ssl.sh
+│   ├── setup_app.sh               Manual app setup (install, build, PM2 start)
+│   ├── update_panel.sh            Panel self-update script
+│   ├── deploy_next_app.sh         Next.js app deployment
+│   ├── install_nginx.sh           NGINX installation
+│   ├── install_postgres.sh        PostgreSQL installation
+│   ├── install_redis.sh           Redis installation
+│   ├── install.sh                 General install script
+│   ├── create_ssl.sh              SSL certificate creation
+│   ├── deploy.py                  Python deploy helper
+│   └── fix_embed.py               Embed fix utility
 └── nginx-templates/
     ├── app.conf.example           Template for hosted apps
     └── panel.conf.example         Template for the panel itself
@@ -124,38 +143,57 @@ panel/
 ## API Endpoints
 
 ```
-POST   /api/auth/login          Login (returns JWT + sets HttpOnly cookie)
-POST   /api/auth/logout         Logout (clears cookie)
-GET    /api/auth/me             Current user info
+GET    /health                           Health check (uptime)
 
-GET    /api/apps                List all apps
-POST   /api/apps                Deploy a new app
-GET    /api/apps/{name}         Get app details
-POST   /api/apps/{name}/action  Start/stop/restart/delete an app
-PUT    /api/apps/{name}/env     Update environment variables
+POST   /api/auth/login                   Login (returns JWT + sets HttpOnly cookie)
+POST   /api/auth/logout                  Logout (clears cookie)
+GET    /api/auth/me                      Current user info
 
-POST   /api/domains             Add domain to an app
-DELETE /api/domains/{domain}    Remove a domain
+GET    /api/apps                         List all apps
+POST   /api/apps                         Deploy a new app (Git URL, GitHub URL, or empty)
+GET    /api/apps/{name}                  Get app details
+POST   /api/apps/{name}/action           Start/stop/restart/rebuild/delete/setup an app
+PUT    /api/apps/{name}/env              Update environment variables
+GET    /api/apps/{name}/env-file         Read .env/.env.local from disk with source tracking
+POST   /api/apps/{name}/deploy-zip       Upload .zip project file for manual deployment
 
-POST   /api/ssl                 Issue SSL certificate via Certbot
+POST   /api/domains                      Add domain to an app
+DELETE /api/domains/{domain}             Remove a domain
 
-GET    /api/databases           List PostgreSQL databases
-POST   /api/databases           Create database + user
-DELETE /api/databases/{name}    Drop database + user
+POST   /api/ssl                          Issue SSL certificate via Certbot
+POST   /api/ssl/disable                  Disable SSL for a domain (revert to HTTP)
 
-GET    /api/redis               Redis status + connection info
-POST   /api/redis/install       Install Redis
+GET    /api/databases                    List PostgreSQL databases
+POST   /api/databases                    Create database + user
+DELETE /api/databases/{name}             Drop database + user
+GET    /api/databases/stats              PostgreSQL monitoring dashboard
+GET    /api/databases/{name}/backup      Download pg_dump backup (streaming)
+POST   /api/databases/{name}/restore     Restore from SQL or custom-format dump
 
-GET    /api/files/{app}         List files in app directory
-GET    /api/files/{app}/content Read file content
-PUT    /api/files/{app}/content Write file content
-POST   /api/files/{app}/upload  Upload files
+GET    /api/redis                        Redis status + connection info
+POST   /api/redis/install                Install Redis
+GET    /api/redis/stats                  Redis monitoring dashboard
 
-GET    /api/logs/app/{name}     PM2 logs for an app
-GET    /api/logs/nginx          NGINX access/error logs
+GET    /api/services                     List system services status
+POST   /api/services/{name}/start        Start a system service
+POST   /api/services/{name}/stop         Stop a system service
+POST   /api/services/{name}/restart      Restart a system service
 
-GET    /api/stats               System stats (CPU, memory, disk, apps)
-GET    /health                  Health check
+GET    /api/files/{app}                  List files in app directory
+GET    /api/files/{app}/content          Read file content
+PUT    /api/files/{app}/content          Write file content
+POST   /api/files/{app}/upload           Upload files
+
+GET    /api/logs/app/{name}              PM2 logs for an app
+GET    /api/logs/app/{name}/file         Direct PM2 log file read
+GET    /api/logs/nginx                   NGINX access/error logs
+
+GET    /api/stats                        System stats (CPU, memory, disk, network, processes)
+GET    /api/stats/ws                     WebSocket live stats stream (2s interval)
+
+GET    /api/update/check                 Check for panel updates (compare with remote)
+POST   /api/update/apply                 Apply panel update (SSE-streamed progress)
+GET    /api/update/log                   View last update log
 ```
 
 ## Security Model
