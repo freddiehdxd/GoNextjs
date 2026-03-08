@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Database as DbIcon, Plus, Trash2, Copy, Check, Activity,
   HardDrive, Users, Zap, AlertTriangle, Clock, ArrowDown, ArrowUp,
-  BarChart3, RefreshCw, Server,
+  BarChart3, RefreshCw, Server, Download, Upload,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import Modal from '@/components/Modal';
@@ -271,6 +271,65 @@ export default function DatabasesPage() {
     await fetchStats();
   }
 
+  // Backup / Restore
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState('');
+  const [restoreSuccess, setRestoreSuccess] = useState('');
+
+  async function downloadBackup(name: string) {
+    setDownloading(name);
+    try {
+      const res = await fetch(`/api/databases/${name}/backup`, { credentials: 'same-origin' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Download failed' }));
+        alert(err.error || 'Download failed');
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition');
+      const match = disposition?.match(/filename="(.+)"/);
+      const filename = match?.[1] || `${name}_backup.sql`;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      alert('Failed to download backup');
+    } finally {
+      setDownloading(null);
+    }
+  }
+
+  async function restoreDb(name: string, file: File) {
+    setRestoring(true);
+    setRestoreError('');
+    setRestoreSuccess('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`/api/databases/${name}/restore`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRestoreSuccess(data.data?.message || 'Database restored successfully');
+        setRestoreTarget(null);
+        await fetchStats();
+      } else {
+        setRestoreError(data.error || 'Restore failed');
+      }
+    } catch {
+      setRestoreError('Failed to upload file');
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   const pg = pgStats;
 
   return (
@@ -517,16 +576,84 @@ export default function DatabasesPage() {
                       </div>
                     </div>
                   </div>
-                  <button onClick={() => deleteDb(db.name)}
-                    className="p-2 rounded-xl text-gray-700 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100 shrink-0"
-                    title="Delete database">
-                    <Trash2 size={15} />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-all">
+                    <button onClick={() => downloadBackup(db.name)}
+                      disabled={downloading === db.name}
+                      className="p-2 rounded-xl text-gray-700 hover:text-blue-400 hover:bg-blue-500/10 transition-all"
+                      title="Download backup">
+                      {downloading === db.name
+                        ? <span className="h-3.5 w-3.5 rounded-full border-2 border-blue-400/30 border-t-blue-400 animate-spin block" />
+                        : <Download size={15} />}
+                    </button>
+                    <button onClick={() => { setRestoreTarget(db.name); setRestoreError(''); setRestoreSuccess(''); }}
+                      className="p-2 rounded-xl text-gray-700 hover:text-amber-400 hover:bg-amber-500/10 transition-all"
+                      title="Restore from backup">
+                      <Upload size={15} />
+                    </button>
+                    <button onClick={() => deleteDb(db.name)}
+                      className="p-2 rounded-xl text-gray-700 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                      title="Delete database">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
+      )}
+
+      {/* Restore Success Banner */}
+      {restoreSuccess && (
+        <div className="mt-4 card animate-slide-up" style={{ borderColor: 'rgba(16,185,129,0.25)', background: 'rgba(16,185,129,0.05)' }}>
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}>
+              <Upload size={15} className="text-emerald-400" />
+            </div>
+            <p className="text-emerald-400 font-semibold text-sm flex-1">{restoreSuccess}</p>
+            <button onClick={() => setRestoreSuccess('')} className="btn-ghost text-xs">Dismiss</button>
+          </div>
+        </div>
+      )}
+
+      {/* Restore Modal */}
+      {restoreTarget && (
+        <Modal title={`Restore "${restoreTarget}"`} onClose={() => { setRestoreTarget(null); setRestoreError(''); }}>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-400">
+              This will execute the SQL file against the database. Existing data may be overwritten or duplicated. Consider downloading a backup first.
+            </div>
+            <div>
+              <label className="label">SQL Dump File</label>
+              <input
+                type="file"
+                accept=".sql,.dump,.backup,.gz"
+                className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border file:border-white/10 file:text-sm file:font-medium file:bg-white/5 file:text-gray-300 hover:file:bg-white/10 file:cursor-pointer file:transition-all"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file && restoreTarget) {
+                    restoreDb(restoreTarget, file);
+                  }
+                }}
+                disabled={restoring}
+              />
+              <p className="text-xs text-gray-600 mt-1.5">Upload a .sql dump file (from pg_dump or the Download button)</p>
+            </div>
+            {restoring && (
+              <div className="flex items-center gap-2 text-sm text-gray-400">
+                <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                Restoring database, this may take a while...
+              </div>
+            )}
+            {restoreError && (
+              <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400">{restoreError}</div>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button className="btn-ghost" onClick={() => { setRestoreTarget(null); setRestoreError(''); }}>Cancel</button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {/* Create Modal */}

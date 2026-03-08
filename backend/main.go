@@ -52,7 +52,7 @@ func main() {
 	appsHandler := handlers.NewAppsHandler(db, pm2, exec, portAlloc, cfg)
 	domainsHandler := handlers.NewDomainsHandler(db, nginx)
 	sslHandler := handlers.NewSSLHandler(db, nginx, exec)
-	dbHandler := handlers.NewDatabasesHandler(db, cfg)
+	dbHandler := handlers.NewDatabasesHandler(db, cfg, exec)
 	redisHandler := handlers.NewRedisHandler(exec)
 	filesHandler := handlers.NewFilesHandler(cfg)
 	logsHandler := handlers.NewLogsHandler(pm2, exec)
@@ -121,6 +121,8 @@ func main() {
 		r.Post("/databases", dbHandler.Create)
 		r.Delete("/databases/{name}", dbHandler.Delete)
 		r.Get("/databases/stats", dbHandler.Stats)
+		r.Get("/databases/{name}/backup", dbHandler.Backup)
+		r.Post("/databases/{name}/restore", dbHandler.Restore)
 
 		// Redis
 		r.Get("/redis", redisHandler.Status)

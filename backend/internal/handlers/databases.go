@@ -18,13 +18,14 @@ import (
 
 // DatabasesHandler handles managed database routes
 type DatabasesHandler struct {
-	db  *services.DB
-	cfg *config.Config
+	db   *services.DB
+	cfg  *config.Config
+	exec *services.Executor
 }
 
 // NewDatabasesHandler creates a new databases handler
-func NewDatabasesHandler(db *services.DB, cfg *config.Config) *DatabasesHandler {
-	return &DatabasesHandler{db: db, cfg: cfg}
+func NewDatabasesHandler(db *services.DB, cfg *config.Config, exec *services.Executor) *DatabasesHandler {
+	return &DatabasesHandler{db: db, cfg: cfg, exec: exec}
 }
 
 // List handles GET /api/databases
@@ -305,6 +306,100 @@ func (h *DatabasesHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	Success(w, overview)
+}
+
+// Backup handles GET /api/databases/{name}/backup — downloads a pg_dump of the database
+func (h *DatabasesHandler) Backup(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if !services.ValidatePgIdentifier(name) {
+		Error(w, http.StatusBadRequest, "Invalid database name")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Verify the database exists in managed_databases and get credentials
+	var dbUser, password string
+	err := h.db.QueryRow(ctx,
+		"SELECT db_user, password FROM managed_databases WHERE name = $1", name).Scan(&dbUser, &password)
+	if err != nil {
+		Error(w, http.StatusNotFound, "Database not found")
+		return
+	}
+
+	// Build the connection URI for pg_dump
+	connURI := fmt.Sprintf("postgresql://%s:%s@%s:5432/%s", dbUser, password, h.cfg.DBHost, name)
+
+	// Set headers for file download
+	filename := fmt.Sprintf("%s_%s.sql", name, time.Now().Format("20060102_150405"))
+	w.Header().Set("Content-Type", "application/sql")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+
+	// Stream pg_dump output directly to the response writer
+	if err := h.exec.RunBinStream(w, "pg_dump", "--no-owner", "--no-acl", connURI); err != nil {
+		// If headers already sent we can't change status, but if nothing written yet we can error
+		// In practice pg_dump either fails fast (bad connection) or streams data
+		http.Error(w, fmt.Sprintf("Backup failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+// Restore handles POST /api/databases/{name}/restore — restores a SQL dump into the database
+func (h *DatabasesHandler) Restore(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if !services.ValidatePgIdentifier(name) {
+		Error(w, http.StatusBadRequest, "Invalid database name")
+		return
+	}
+
+	// Parse multipart form (max 500 MB)
+	if err := r.ParseMultipartForm(500 << 20); err != nil {
+		Error(w, http.StatusBadRequest, "File too large or invalid upload")
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		Error(w, http.StatusBadRequest, "No file provided")
+		return
+	}
+	defer file.Close()
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Verify the database exists in managed_databases and get credentials
+	var dbUser, password string
+	err = h.db.QueryRow(ctx,
+		"SELECT db_user, password FROM managed_databases WHERE name = $1", name).Scan(&dbUser, &password)
+	if err != nil {
+		Error(w, http.StatusNotFound, "Database not found")
+		return
+	}
+
+	// Build connection URI for psql
+	connURI := fmt.Sprintf("postgresql://%s:%s@%s:5432/%s", dbUser, password, h.cfg.DBHost, name)
+
+	// Pipe the uploaded file into psql to restore
+	result, err := h.exec.RunBinWithStdin(file, "psql", connURI)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, fmt.Sprintf("Restore failed: %v", err))
+		return
+	}
+
+	if result.Code != 0 {
+		errMsg := result.Stderr
+		if len(errMsg) > 500 {
+			errMsg = errMsg[:500] + "..."
+		}
+		Error(w, http.StatusInternalServerError, fmt.Sprintf("Restore completed with errors: %s", errMsg))
+		return
+	}
+
+	Success(w, map[string]string{"message": "Database " + name + " restored successfully"})
 }
 
 func formatPgUptime(totalSecs int) string {

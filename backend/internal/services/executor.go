@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -34,8 +35,10 @@ var allowedBins = map[string]string{
 	"nginx":     "/usr/sbin/nginx",
 	"certbot":   "/usr/bin/certbot",
 	"systemctl": "/bin/systemctl",
-	"psql":      "/usr/bin/psql",
-	"tail":      "/usr/bin/tail",
+	"psql":       "/usr/bin/psql",
+	"pg_dump":    "/usr/bin/pg_dump",
+	"pg_restore": "/usr/bin/pg_restore",
+	"tail":       "/usr/bin/tail",
 	"redis-cli": "/usr/bin/redis-cli",
 }
 
@@ -150,6 +153,77 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 	n, err := w.buf.Write(p)
 	w.written += n
 	return n, err
+}
+
+// RunBinStream runs an allowed binary and streams stdout directly to the provided writer.
+// Used for large outputs like pg_dump where buffering is not practical.
+func (e *Executor) RunBinStream(w io.Writer, bin string, args ...string) error {
+	binPath, ok := allowedBins[bin]
+	if !ok {
+		return fmt.Errorf("binary not allowed: %s", bin)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, args...)
+	cmd.Env = []string{
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/root",
+	}
+	cmd.Stdout = w
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &limitedWriter{buf: &stderr, max: maxOutputSize}
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%v: %s", err, stderr.String())
+	}
+	return nil
+}
+
+// RunBinWithStdin runs an allowed binary and pipes the provided reader into stdin.
+// Used for operations like pg_restore / psql restore.
+func (e *Executor) RunBinWithStdin(r io.Reader, bin string, args ...string) (*models.ExecResult, error) {
+	binPath, ok := allowedBins[bin]
+	if !ok {
+		return nil, fmt.Errorf("binary not allowed: %s", bin)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, args...)
+	cmd.Env = []string{
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/root",
+	}
+	cmd.Stdin = r
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{buf: &stdout, max: maxOutputSize}
+	cmd.Stderr = &limitedWriter{buf: &stderr, max: maxOutputSize}
+
+	err := cmd.Run()
+	result := &models.ExecResult{
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
+		Code:   0,
+	}
+
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			result.Code = timeoutCode
+			result.Stderr = result.Stderr + "\n... command timed out"
+		} else if exitErr, ok := err.(*exec.ExitError); ok {
+			result.Code = exitErr.ExitCode()
+		} else {
+			result.Code = 1
+			result.Stderr = err.Error()
+		}
+	}
+
+	return result, nil
 }
 
 // ValidateAppName validates an application name
