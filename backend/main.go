@@ -58,6 +58,7 @@ func main() {
 	logsHandler := handlers.NewLogsHandler(pm2, exec)
 	statsHandler := handlers.NewStatsHandler(pm2, cfg, db)
 	updateHandler := handlers.NewUpdateHandler(cfg)
+	servicesHandler := handlers.NewServicesHandler(exec)
 
 	// Create router
 	r := chi.NewRouter()
@@ -134,6 +135,12 @@ func main() {
 			r.Get("/redis", redisHandler.Status)
 			r.Post("/redis/install", redisHandler.Install)
 			r.Get("/redis/stats", redisHandler.Stats)
+
+			// System Services
+			r.Get("/services", servicesHandler.List)
+			r.Post("/services/{name}/restart", servicesHandler.Restart)
+			r.Post("/services/{name}/stop", servicesHandler.Stop)
+			r.Post("/services/{name}/start", servicesHandler.Start)
 
 			// Files
 			r.Get("/files/{app}", filesHandler.List)

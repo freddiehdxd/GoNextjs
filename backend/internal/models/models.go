@@ -272,6 +272,22 @@ type RedisKeyspace struct {
 	AvgTTL  int64  `json:"avgTtl"`
 }
 
+// ServiceInfo represents a system service status
+type ServiceInfo struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description"`
+	Active      bool   `json:"active"`
+	Running     bool   `json:"running"`
+	Enabled     bool   `json:"enabled"`
+	StatusText  string `json:"statusText"`
+	SubState    string `json:"subState"`
+	MainPID     int    `json:"mainPid"`
+	Memory      string `json:"memory"`
+	Uptime      string `json:"uptime"`
+	Icon        string `json:"icon"`
+}
+
 // ExecResult holds the result of a command execution
 type ExecResult struct {
 	Stdout string
