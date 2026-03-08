@@ -105,6 +105,40 @@ fi
 mkdir -p /var/log/panel
 
 # ── PM2 ecosystem file ─────────────────────────────────────────────────────
+# Build env block: always include NODE_ENV and PORT, then merge .env vars
+ENV_BLOCK="      NODE_ENV: 'production',
+      PORT:     '${PORT}',"
+
+if [ -f "${APP_DIR}/.env" ]; then
+  echo "[panel] Loading environment variables from .env..."
+  # Parse .env and generate JS object entries (handles quoted values)
+  EXTRA_ENV=$(node -e "
+    const fs = require('fs');
+    const lines = fs.readFileSync('${APP_DIR}/.env', 'utf8').split('\n');
+    lines.forEach(line => {
+      line = line.trim();
+      if (!line || line.startsWith('#')) return;
+      const eq = line.indexOf('=');
+      if (eq < 0) return;
+      const key = line.slice(0, eq).trim();
+      let val = line.slice(eq + 1).trim();
+      // Strip surrounding quotes
+      if ((val.startsWith('\"') && val.endsWith('\"')) || (val.startsWith(\"'\") && val.endsWith(\"'\"))) {
+        val = val.slice(1, -1);
+      }
+      // Skip NODE_ENV and PORT (already set)
+      if (key === 'NODE_ENV' || key === 'PORT') return;
+      // Escape single quotes for JS output
+      val = val.replace(/'/g, \"\\\\\\'\" );
+      console.log(\"      '\" + key + \"': '\" + val + \"',\");
+    });
+  " 2>/dev/null)
+  if [ -n "$EXTRA_ENV" ]; then
+    ENV_BLOCK="${ENV_BLOCK}
+${EXTRA_ENV}"
+  fi
+fi
+
 cat > "${APP_DIR}/ecosystem.config.js" <<EOF
 module.exports = {
   apps: [{
@@ -113,8 +147,7 @@ module.exports = {
     script:  'npm',
     args:    'start',
     env: {
-      NODE_ENV: 'production',
-      PORT:     '${PORT}',
+${ENV_BLOCK}
     },
     max_memory_restart: '512M',
     error_file:  '/var/log/panel/pm2-${APP_NAME}-error.log',

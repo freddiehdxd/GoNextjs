@@ -197,6 +197,14 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Write .env file with user-defined env vars so deploy/setup scripts pick them up
+	if len(body.EnvVars) > 0 {
+		if err := h.writeEnvFile(body.Name, body.EnvVars); err != nil {
+			// Non-fatal — log but continue
+			fmt.Printf("[warn] failed to write .env for %s: %v\n", body.Name, err)
+		}
+	}
+
 	// Insert into database
 	envJSON, _ := json.Marshal(body.EnvVars)
 	var app models.App
@@ -271,6 +279,9 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Write .env before rebuild so the script picks up current env vars
+		h.writeEnvFile(app.Name, app.EnvVars)
+
 		result, err := h.exec.RunScript("deploy_next_app.sh",
 			app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port))
 		if err != nil {
@@ -284,6 +295,9 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 		Success(w, map[string]string{"message": "Rebuild complete"})
 
 	case "setup":
+		// Write .env before setup so the script picks up current env vars
+		h.writeEnvFile(app.Name, app.EnvVars)
+
 		// Install dependencies, build, and start via PM2 (for manually uploaded apps)
 		result, err := h.exec.RunScript("setup_app.sh",
 			app.Name, fmt.Sprintf("%d", app.Port))
@@ -337,6 +351,15 @@ func (h *AppsHandler) UpdateEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.Unmarshal(envBytes, &app.EnvVars)
+
+	// Write .env file to app directory
+	if err := h.writeEnvFile(name, body.EnvVars); err != nil {
+		fmt.Printf("[warn] failed to write .env for %s: %v\n", name, err)
+	}
+
+	// Restart PM2 process with new env vars (best effort)
+	// --update-env makes PM2 pick up the updated ecosystem env
+	h.pm2.Action("restart", name)
 
 	Success(w, app)
 }
@@ -453,6 +476,37 @@ func (h *AppsHandler) UploadProject(w http.ResponseWriter, r *http.Request) {
 		"message": fmt.Sprintf("Project uploaded and extracted to /var/www/apps/%s", name),
 		"files":   fileCount,
 	})
+}
+
+// writeEnvFile writes environment variables to /var/www/apps/{name}/.env
+// This file is read by the deploy/setup scripts and injected into ecosystem.config.js
+func (h *AppsHandler) writeEnvFile(appName string, envVars map[string]string) error {
+	appDir := filepath.Join(h.cfg.AppsDir, appName)
+
+	// Ensure app directory exists
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		return fmt.Errorf("create app dir: %w", err)
+	}
+
+	envPath := filepath.Join(appDir, ".env")
+
+	if len(envVars) == 0 {
+		// Remove .env if no vars (don't leave empty file)
+		os.Remove(envPath)
+		return nil
+	}
+
+	var lines []string
+	for k, v := range envVars {
+		// Escape values containing special chars by quoting
+		if strings.ContainsAny(v, " \t\n\"'\\$#") {
+			v = `"` + strings.ReplaceAll(strings.ReplaceAll(v, `\`, `\\`), `"`, `\"`) + `"`
+		}
+		lines = append(lines, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	content := strings.Join(lines, "\n") + "\n"
+	return os.WriteFile(envPath, []byte(content), 0600)
 }
 
 // sanitizeDeployError strips internal paths and limits error message length for client responses
