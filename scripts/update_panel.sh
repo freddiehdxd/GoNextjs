@@ -84,8 +84,8 @@ if [ ! -f panel-server.new ] || [ ! -s panel-server.new ]; then
   exit 1
 fi
 
-# Quick sanity: binary is executable and an ELF file
-if ! file panel-server.new | grep -q "ELF"; then
+# Quick sanity: binary starts with ELF magic bytes (7f 45 4c 46)
+if ! head -c 4 panel-server.new | grep -q "ELF"; then
   echo "[ERROR] Built binary is not a valid ELF executable — aborting"
   rm -f panel-server.new
   exit 1
