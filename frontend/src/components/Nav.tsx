@@ -4,7 +4,7 @@ import { clearToken } from '@/lib/api';
 import {
   LayoutDashboard, Server, Globe, ShieldCheck, Database,
   FolderOpen, FileText, Cpu, LogOut, Search, ChevronRight,
-  Zap, X, Command, Settings,
+  Zap, X, Command, Settings, Wrench,
 } from 'lucide-react';
 
 const NAV_LINKS = [
@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { href: '/ssl',       label: 'SSL',         icon: ShieldCheck,      color: 'text-emerald-400' },
   { href: '/databases', label: 'Databases',   icon: Database,         color: 'text-amber-400'   },
   { href: '/redis',     label: 'Redis',       icon: Cpu,              color: 'text-red-400'     },
+  { href: '/services',  label: 'Services',    icon: Wrench,           color: 'text-teal-400'    },
   { href: '/files',     label: 'Files',       icon: FolderOpen,       color: 'text-orange-400'  },
   { href: '/logs',      label: 'Logs',        icon: FileText,         color: 'text-pink-400'    },
   { href: '/settings',  label: 'Settings',    icon: Settings,         color: 'text-gray-400'    },

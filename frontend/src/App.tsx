@@ -12,6 +12,7 @@ import Databases from '@/pages/Databases';
 import Redis from '@/pages/Redis';
 import Files from '@/pages/Files';
 import Logs from '@/pages/Logs';
+import Services from '@/pages/Services';
 import Settings from '@/pages/Settings';
 import NotFound from '@/pages/NotFound';
 
@@ -110,6 +111,7 @@ export default function App() {
         <Route path="/ssl" element={<ProtectedRoute><SSL /></ProtectedRoute>} />
         <Route path="/databases" element={<ProtectedRoute><Databases /></ProtectedRoute>} />
         <Route path="/redis" element={<ProtectedRoute><Redis /></ProtectedRoute>} />
+        <Route path="/services" element={<ProtectedRoute><Services /></ProtectedRoute>} />
         <Route path="/files" element={<ProtectedRoute><Files /></ProtectedRoute>} />
         <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
