@@ -148,45 +148,10 @@ echo "[6/7] Done — frontend swapped (old saved as dist.bak)."
 
 # ── 7. Restart panel backend ONLY (user apps untouched) ──────────────────
 echo ""
-echo "[7/7] Restarting panel backend (user apps NOT affected)..."
+echo "[7/7] Scheduling panel backend restart (user apps NOT affected)..."
 
 # Update script permissions
 chmod +x "$PANEL_DIR/scripts/"*.sh
-
-# Restart ONLY the panel backend — pm2 restart with exact name
-pm2 restart panel-backend --update-env 2>&1
-
-# Wait for it to come up
-sleep 2
-
-# Verify panel-backend is online
-PANEL_STATUS=$(pm2 jlist 2>/dev/null | python3 -c "
-import sys, json
-try:
-    procs = json.load(sys.stdin)
-    for p in procs:
-        if p['name'] == 'panel-backend':
-            print(p['pm2_env']['status'])
-except:
-    print('unknown')
-" 2>/dev/null || echo "unknown")
-
-if [ "$PANEL_STATUS" != "online" ]; then
-  echo "[WARNING] panel-backend status: $PANEL_STATUS — may need manual check"
-  echo "[WARNING] Rollback: cp backend/panel-server.bak backend/panel-server && pm2 restart panel-backend"
-else
-  echo "[7/7] Done — panel-backend is online."
-fi
-
-# ── Verify user apps are still running ────────────────────────────────────
-echo ""
-echo "[verify] Checking user apps after update..."
-USER_APPS_AFTER=$(list_user_apps)
-if [ -n "$USER_APPS_AFTER" ]; then
-  echo "$USER_APPS_AFTER"
-else
-  echo "  (no user apps running)"
-fi
 
 # Save PM2 process list
 pm2 save --force 2>/dev/null || true
@@ -198,3 +163,10 @@ echo "[update] Update complete! Now running: $NEW_HEAD"
 echo "[update] User apps: untouched"
 echo "[update] $(date '+%Y-%m-%d %H:%M:%S')"
 echo "======================================"
+
+# Schedule PM2 restart AFTER this script exits cleanly.
+# The script is a child process of the Go backend, so if we restart PM2
+# here directly, it kills Go, which kills this script with SIGINT.
+# By deferring the restart with nohup + sleep, the script exits first,
+# Go sends the "complete" SSE event, then the backend restarts.
+nohup bash -c "sleep 2 && pm2 restart panel-backend --update-env" >/dev/null 2>&1 &
