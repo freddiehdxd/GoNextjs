@@ -558,7 +558,8 @@ func containsFatalErrors(output string) bool {
 		strings.Contains(lower, "connection refused") ||
 		strings.Contains(lower, "password authentication failed") ||
 		strings.Contains(lower, "no such file") ||
-		strings.Contains(lower, "not a valid archive")
+		strings.Contains(lower, "not a valid archive") ||
+		strings.Contains(lower, "unsupported version")
 }
 
 func formatPgUptime(totalSecs int) string {
