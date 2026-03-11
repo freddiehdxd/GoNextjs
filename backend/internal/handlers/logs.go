@@ -90,12 +90,7 @@ func (h *LogsHandler) AppLogFile(w http.ResponseWriter, r *http.Request) {
 
 	lines := parseLines(r)
 
-	// PM2 stores logs in ~/.pm2/logs/{name}-{out|error}.log
-	pm2Home := os.Getenv("HOME")
-	if pm2Home == "" {
-		pm2Home = "/root"
-	}
-	logFile := filepath.Join(pm2Home, ".pm2", "logs", fmt.Sprintf("%s-%s.log", name, logType))
+	logFile := resolveLogFile(name, logType)
 
 	// Check file exists
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
@@ -177,12 +172,7 @@ func (h *LogsHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 		logType = "out"
 	}
 
-	// Resolve log file path
-	pm2Home := os.Getenv("HOME")
-	if pm2Home == "" {
-		pm2Home = "/root"
-	}
-	logFile := filepath.Join(pm2Home, ".pm2", "logs", fmt.Sprintf("%s-%s.log", name, logType))
+	logFile := resolveLogFile(name, logType)
 
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -256,6 +246,30 @@ func (h *LogsHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// resolveLogFile finds the PM2 log file for an app, checking the custom
+// panel log dir first (/var/log/panel/pm2-{name}-{type}.log), then
+// falling back to the default PM2 location (~/.pm2/logs/{name}-{type}.log).
+func resolveLogFile(name, logType string) string {
+	// Custom path from our ecosystem config
+	custom := fmt.Sprintf("/var/log/panel/pm2-%s-%s.log", name, logType)
+	if _, err := os.Stat(custom); err == nil {
+		return custom
+	}
+
+	// Default PM2 path
+	pm2Home := os.Getenv("HOME")
+	if pm2Home == "" {
+		pm2Home = "/root"
+	}
+	defaultPath := filepath.Join(pm2Home, ".pm2", "logs", fmt.Sprintf("%s-%s.log", name, logType))
+	if _, err := os.Stat(defaultPath); err == nil {
+		return defaultPath
+	}
+
+	// Return custom path as preferred (will be created when app starts)
+	return custom
 }
 
 // tailFile reads the last N lines from a file
