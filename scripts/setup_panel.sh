@@ -165,10 +165,9 @@ SERVER_IP="$(curl -fsSL --connect-timeout 5 https://api.ipify.org 2>/dev/null ||
 
 cat > "${PANEL_DIR}/backend/.env" <<EOF
 PORT=4000
-NODE_ENV=production
+PANEL_ENV=production
 JWT_SECRET=${JWT_SECRET}
 ADMIN_USERNAME=${ADMIN_USER}
-ADMIN_PASSWORD=${ADMIN_PASS}
 DATABASE_URL=postgresql://${PANEL_DB_USER}:${PANEL_DB_PASS}@localhost:5432/${PANEL_DB_NAME}
 APPS_DIR=/var/www/apps
 NGINX_AVAILABLE=/etc/nginx/sites-available
@@ -180,6 +179,48 @@ PANEL_ORIGIN=http://${SERVER_IP}
 EOF
 
 ok "Config written to backend/.env"
+
+# Generate bcrypt hash for admin password BEFORE starting the backend
+# (production mode requires ADMIN_PASSWORD_HASH — plaintext is rejected)
+info "Hashing admin password..."
+cd "${PANEL_DIR}/backend"
+export PATH="/usr/local/go/bin:$PATH"
+mkdir -p /tmp/panel-hash
+cat > /tmp/panel-hash/main.go <<'HASHGO'
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		os.Exit(1)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(os.Args[1]), 12)
+	if err != nil {
+		os.Exit(1)
+	}
+	fmt.Print(string(hash))
+}
+HASHGO
+cp go.mod /tmp/panel-hash/go.mod
+cp go.sum /tmp/panel-hash/go.sum
+BCRYPT_HASH=$(cd /tmp/panel-hash && go run main.go "${ADMIN_PASS}" 2>/dev/null || echo "")
+rm -rf /tmp/panel-hash
+
+if [ -n "$BCRYPT_HASH" ]; then
+  echo "ADMIN_PASSWORD_HASH='${BCRYPT_HASH}'" >> "${PANEL_DIR}/backend/.env"
+  ok "Admin password bcrypt-hashed"
+else
+  # Fallback: write plaintext password (only works in dev mode)
+  warn "Could not hash password — falling back to plaintext"
+  sed -i 's/^PANEL_ENV=production/PANEL_ENV=development/' "${PANEL_DIR}/backend/.env"
+  echo "ADMIN_PASSWORD=${ADMIN_PASS}" >> "${PANEL_DIR}/backend/.env"
+fi
 
 # ── 10. Build ─────────────────────────────────────────────────────────────
 step 10 "Building application"
@@ -436,44 +477,7 @@ NGINXSEC
 nginx -t > /dev/null 2>&1 && systemctl reload nginx
 ok "NGINX hardened — version hidden, security headers, buffer limits"
 
-# Bcrypt admin password using a temp Go program within the backend module
-cd "${PANEL_DIR}/backend"
-mkdir -p /tmp/panel-hash
-cat > /tmp/panel-hash/main.go <<'HASHGO'
-package main
-
-import (
-	"fmt"
-	"os"
-
-	"golang.org/x/crypto/bcrypt"
-)
-
-func main() {
-	if len(os.Args) < 2 {
-		os.Exit(1)
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(os.Args[1]), 12)
-	if err != nil {
-		os.Exit(1)
-	}
-	fmt.Print(string(hash))
-}
-HASHGO
-cp go.mod /tmp/panel-hash/go.mod
-cp go.sum /tmp/panel-hash/go.sum
-BCRYPT_HASH=$(cd /tmp/panel-hash && go run main.go "${ADMIN_PASS}" 2>/dev/null || echo "")
-rm -rf /tmp/panel-hash
-
-if [ -n "$BCRYPT_HASH" ]; then
-  # Remove plaintext password line
-  sed -i '/^ADMIN_PASSWORD=/d' "${PANEL_DIR}/backend/.env"
-  # Write bcrypt hash wrapped in single quotes (preserves $ characters for godotenv)
-  echo "ADMIN_PASSWORD_HASH='${BCRYPT_HASH}'" >> "${PANEL_DIR}/backend/.env"
-  ok "Admin password bcrypt-hashed (plaintext removed from .env)"
-else
-  warn "Could not hash password — keeping plaintext (change manually later)"
-fi
+# (bcrypt hashing was already done in step 9 before starting the backend)
 
 # ── Done ─────────────────────────────────────────────────────────────────
 echo ""
