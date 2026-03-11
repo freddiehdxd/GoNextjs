@@ -2,31 +2,37 @@ import { useEffect, useState, useCallback } from 'react';
 import { Shield, ShieldCheck, ShieldOff, Lock, Unlock, CheckCircle2 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import Modal from '@/components/Modal';
-import { api, App } from '@/lib/api';
+import { api, App, Domain } from '@/lib/api';
+
+type DomainEntry = Domain & { appName: string; port: number };
 
 export default function SSLPage() {
   const [apps,     setApps]     = useState<App[]>([]);
   const [loading,  setLoading]  = useState(true);
-  const [selected, setSelected] = useState<App | null>(null);
+  const [selected, setSelected] = useState<DomainEntry | null>(null);
   const [email,    setEmail]    = useState('');
   const [issuing,  setIssuing]  = useState(false);
-  const [disabling, setDisabling] = useState<App | null>(null);
+  const [disabling, setDisabling] = useState<DomainEntry | null>(null);
   const [removing, setRemoving] = useState(false);
   const [error,    setError]    = useState('');
   const [success,  setSuccess]  = useState('');
 
   const fetchApps = useCallback(async () => {
     const res = await api.get<App[]>('/apps');
-    if (res.success && res.data) setApps(res.data.filter((a) => a.domain));
+    if (res.success && res.data) setApps(res.data);
     setLoading(false);
   }, []);
 
   useEffect(() => { fetchApps(); }, [fetchApps]);
 
+  const allDomains: DomainEntry[] = apps.flatMap(app =>
+    app.domains.map(d => ({ ...d, appName: app.name, port: app.port }))
+  );
+
   async function issueSSL() {
     if (!selected) return;
     setIssuing(true); setError(''); setSuccess('');
-    const res = await api.post('/ssl', { app_name: selected.name, email });
+    const res = await api.post('/ssl', { domain: selected.domain, email });
     setIssuing(false);
     if (res.success) {
       setSuccess(`SSL certificate issued for ${selected.domain}`);
@@ -40,7 +46,7 @@ export default function SSLPage() {
   async function disableSSL() {
     if (!disabling) return;
     setRemoving(true); setError(''); setSuccess('');
-    const res = await api.post('/ssl/disable', { app_name: disabling.name });
+    const res = await api.post('/ssl/disable', { domain: disabling.domain });
     setRemoving(false);
     if (res.success) {
       setSuccess(`SSL disabled for ${disabling.domain}`);
@@ -51,8 +57,8 @@ export default function SSLPage() {
     }
   }
 
-  const secured  = apps.filter((a) => a.ssl_enabled).length;
-  const unsecured = apps.filter((a) => !a.ssl_enabled).length;
+  const secured  = allDomains.filter((d) => d.ssl_enabled).length;
+  const unsecured = allDomains.filter((d) => !d.ssl_enabled).length;
 
   return (
     <Shell>
@@ -73,10 +79,10 @@ export default function SSLPage() {
       )}
 
       {/* Stats row */}
-      {!loading && apps.length > 0 && (
+      {!loading && allDomains.length > 0 && (
         <div className="grid grid-cols-3 gap-3 mb-6">
           {[
-            { label: 'Total Domains', value: apps.length,  color: '#8b5cf6', icon: Shield },
+            { label: 'Total Domains', value: allDomains.length,  color: '#8b5cf6', icon: Shield },
             { label: 'SSL Active',    value: secured,       color: '#10b981', icon: ShieldCheck },
             { label: 'Not Secured',   value: unsecured,     color: '#f59e0b', icon: ShieldOff },
           ].map(({ label, value, color, icon: Icon }) => (
@@ -101,7 +107,7 @@ export default function SSLPage() {
             <div key={i} className="card h-20 shimmer" style={{ background: 'rgba(255,255,255,0.02)' }} />
           ))}
         </div>
-      ) : apps.length === 0 ? (
+      ) : allDomains.length === 0 ? (
         <div className="card flex flex-col items-center justify-center py-24 text-center"
           style={{ background: 'rgba(255,255,255,0.01)' }}>
           <div className="h-16 w-16 rounded-2xl flex items-center justify-center mb-5"
@@ -113,40 +119,40 @@ export default function SSLPage() {
         </div>
       ) : (
         <div className="space-y-3 animate-slide-up">
-          {apps.map((app) => (
-            <div key={app.id} className="card hover:border-white/[0.1] transition-all duration-200 group"
+          {allDomains.map((d) => (
+            <div key={d.id} className="card hover:border-white/[0.1] transition-all duration-200 group"
               style={{ background: 'rgba(255,255,255,0.02)' }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   {/* Shield icon */}
                   <div className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0"
-                    style={app.ssl_enabled
+                    style={d.ssl_enabled
                       ? { background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }
                       : { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                    {app.ssl_enabled
+                    {d.ssl_enabled
                       ? <ShieldCheck size={18} className="text-emerald-400" />
                       : <ShieldOff size={18} className="text-gray-600" />}
                   </div>
 
                   <div>
                     <div className="flex items-center gap-2.5">
-                      <p className="font-semibold text-white text-sm">{app.domain}</p>
-                      {app.ssl_enabled
+                      <p className="font-semibold text-white text-sm">{d.domain}</p>
+                      {d.ssl_enabled
                         ? <span className="badge-green"><Lock size={9} /> Active</span>
                         : <span className="badge-gray">Not secured</span>}
                     </div>
-                    <p className="text-xs text-gray-600 mt-0.5">App: <span className="text-gray-500">{app.name}</span></p>
+                    <p className="text-xs text-gray-600 mt-0.5">App: <span className="text-gray-500">{d.appName}</span></p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {app.ssl_enabled ? (
+                  {d.ssl_enabled ? (
                     <>
                       <span className="btn-success opacity-60 cursor-default">
                         <ShieldCheck size={13} /> Secured
                       </span>
                       <button
-                        onClick={() => { setDisabling(app); setError(''); setSuccess(''); }}
+                        onClick={() => { setDisabling(d); setError(''); setSuccess(''); }}
                         className="btn-ghost text-xs !text-red-400 hover:!bg-red-500/10"
                       >
                         <Unlock size={12} /> Disable
@@ -154,7 +160,7 @@ export default function SSLPage() {
                     </>
                   ) : (
                     <button
-                      onClick={() => { setSelected(app); setError(''); setSuccess(''); }}
+                      onClick={() => { setSelected(d); setError(''); setSuccess(''); }}
                       className="btn-primary"
                     >
                       <Lock size={13} /> Issue SSL

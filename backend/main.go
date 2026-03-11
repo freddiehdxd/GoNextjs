@@ -49,7 +49,7 @@ func main() {
 
 	// Create handlers
 	authHandler := handlers.NewAuthHandler(cfg)
-	appsHandler := handlers.NewAppsHandler(db, pm2, exec, portAlloc, cfg)
+	appsHandler := handlers.NewAppsHandler(db, pm2, exec, portAlloc, nginx, cfg)
 	domainsHandler := handlers.NewDomainsHandler(db, nginx)
 	sslHandler := handlers.NewSSLHandler(db, nginx, exec)
 	dbHandler := handlers.NewDatabasesHandler(db, cfg, exec)

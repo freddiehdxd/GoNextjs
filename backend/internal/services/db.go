@@ -97,12 +97,26 @@ var migrations = []struct {
 			CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at);
 		`,
 	},
-	// To add a new migration, append here:
-	// {
-	//     version:     2,
-	//     description: "Add new_column to apps",
-	//     sql:         `ALTER TABLE apps ADD COLUMN IF NOT EXISTS new_column TEXT;`,
-	// },
+	{
+		version:     2,
+		description: "Move domains to separate table for multi-domain support",
+		sql: `
+			CREATE TABLE IF NOT EXISTS domains (
+				id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				app_id      UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+				domain      TEXT UNIQUE NOT NULL,
+				ssl_enabled BOOLEAN NOT NULL DEFAULT false,
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_domains_app_id ON domains(app_id);
+
+			INSERT INTO domains (app_id, domain, ssl_enabled)
+			SELECT id, domain, ssl_enabled FROM apps WHERE domain IS NOT NULL AND domain != '';
+
+			ALTER TABLE apps DROP COLUMN IF EXISTS domain;
+			ALTER TABLE apps DROP COLUMN IF EXISTS ssl_enabled;
+		`,
+	},
 }
 
 // InitSchema runs all pending migrations in order and performs cleanup.

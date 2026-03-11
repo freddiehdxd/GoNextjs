@@ -117,12 +117,15 @@ export default function AppDetail() {
                     <GitBranch size={11} /> {app.branch}
                   </span>
                 )}
-                {app.domain && (
-                  <a href={`http${app.ssl_enabled ? 's' : ''}://${app.domain}`}
+                {app.domains.length > 0 && (
+                  <a href={`http${app.domains[0].ssl_enabled ? 's' : ''}://${app.domains[0].domain}`}
                     target="_blank" rel="noreferrer"
                     className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors">
-                    <Globe size={11} /> {app.domain} <ExternalLink size={9} />
+                    <Globe size={11} /> {app.domains[0].domain} <ExternalLink size={9} />
                   </a>
+                )}
+                {app.domains.length > 1 && (
+                  <span className="text-[10px] text-gray-500">+{app.domains.length - 1} more</span>
                 )}
               </div>
             </div>
@@ -203,8 +206,8 @@ function OverviewTab({ app }: { app: App }) {
           <InfoRow label="Directory" value={`/var/www/apps/${app.name}`} mono />
           <InfoRow label="Repository" value={app.repo_url || 'Manual deploy'} mono={!!app.repo_url} />
           <InfoRow label="Branch" value={app.branch || '--'} />
-          <InfoRow label="Domain" value={app.domain || 'Not configured'} />
-          <InfoRow label="SSL" value={app.ssl_enabled ? 'Enabled' : 'Disabled'} />
+          <InfoRow label="Domains" value={app.domains.length > 0 ? app.domains.map(d => d.domain).join(', ') : 'Not configured'} />
+          <InfoRow label="SSL" value={app.domains.some(d => d.ssl_enabled) ? `${app.domains.filter(d => d.ssl_enabled).length}/${app.domains.length} enabled` : 'Disabled'} />
           <InfoRow label="Created" value={new Date(app.created_at).toLocaleDateString()} />
         </div>
       </div>
@@ -421,21 +424,24 @@ function ConfigTab({ app, onSaved }: { app: App; onSaved: () => void }) {
             <input className="input font-mono text-xs" value={app.repo_url || 'Manual deploy'} disabled />
           </div>
           <div>
-            <label className="label">Domain</label>
+            <label className="label">Domains</label>
             <div className="flex items-center gap-2">
-              <input className="input flex-1" value={app.domain || 'Not configured'} disabled />
-              {!app.domain && (
-                <Link to="/domains" className="btn-ghost text-xs !py-1.5">
-                  <Globe size={12} /> Add
-                </Link>
-              )}
+              <input className="input flex-1" value={app.domains.length > 0 ? app.domains.map(d => d.domain).join(', ') : 'Not configured'} disabled />
+              <Link to="/domains" className="btn-ghost text-xs !py-1.5">
+                <Globe size={12} /> {app.domains.length > 0 ? 'Manage' : 'Add'}
+              </Link>
             </div>
           </div>
           <div>
             <label className="label">SSL</label>
             <div className="flex items-center gap-2">
-              <input className="input flex-1" value={app.ssl_enabled ? 'Enabled' : 'Disabled'} disabled />
-              {app.domain && !app.ssl_enabled && (
+              <input className="input flex-1" value={
+                app.domains.length === 0 ? 'No domains'
+                : app.domains.every(d => d.ssl_enabled) ? 'All enabled'
+                : app.domains.some(d => d.ssl_enabled) ? `${app.domains.filter(d => d.ssl_enabled).length}/${app.domains.length} enabled`
+                : 'Disabled'
+              } disabled />
+              {app.domains.length > 0 && app.domains.some(d => !d.ssl_enabled) && (
                 <Link to="/ssl" className="btn-ghost text-xs !py-1.5">Enable</Link>
               )}
             </div>

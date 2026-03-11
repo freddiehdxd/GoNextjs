@@ -169,14 +169,15 @@ export default function AppsPage() {
                     <div className="flex items-center gap-3">
                       <span className="font-semibold text-white text-sm hover:text-violet-400 transition-colors">{app.name}</span>
                       <StatusBadge status={app.status} />
-                      {app.domain && (
+                      {app.domains.length > 0 && (
                         <a
-                          href={`http${app.ssl_enabled ? 's' : ''}://${app.domain}`}
+                          href={`http${app.domains[0].ssl_enabled ? 's' : ''}://${app.domains[0].domain}`}
                           target="_blank" rel="noreferrer"
                           className="hidden sm:flex items-center gap-1 text-blue-400 hover:text-blue-300 text-xs transition-colors"
                         >
                           <Globe size={11} />
-                          <span className="truncate max-w-[140px]">{app.domain}</span>
+                          <span className="truncate max-w-[140px]">{app.domains[0].domain}</span>
+                          {app.domains.length > 1 && <span className="text-gray-500">+{app.domains.length - 1}</span>}
                           <ExternalLink size={9} />
                         </a>
                       )}
