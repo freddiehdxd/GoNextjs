@@ -52,7 +52,7 @@ fi
 step 1 "Installing system dependencies"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl git openssl ufw build-essential software-properties-common > /dev/null
+apt-get install -y -qq curl git openssl ufw unzip build-essential software-properties-common > /dev/null
 ok "System packages installed"
 
 # ── 2. Swap (for VPS with ≤2 GB RAM) ─────────────────────────────────────
