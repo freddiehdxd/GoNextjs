@@ -262,7 +262,7 @@ The Go backend (port 4000) is **not** exposed — it only listens on
 | Variable              | Description                                     |
 |-----------------------|-------------------------------------------------|
 | `PORT`                | Backend API port (default: 4000)                |
-| `NODE_ENV`            | Set to `production` for strict JWT validation   |
+| `PANEL_ENV`           | `production` (default) or `development`         |
 | `JWT_SECRET`          | Secret for signing JWTs — keep this private     |
 | `ADMIN_USERNAME`      | Panel admin username                            |
 | `ADMIN_PASSWORD_HASH` | bcrypt hash — wrap in single quotes in .env     |
