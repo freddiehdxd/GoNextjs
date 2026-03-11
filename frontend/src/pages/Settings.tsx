@@ -2,7 +2,8 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   Settings as SettingsIcon, Download, CheckCircle2, AlertCircle,
   RefreshCw, GitCommit, Clock, Terminal, ArrowUpCircle, Loader2,
-  XCircle, ChevronDown, ChevronUp,
+  XCircle, ChevronDown, ChevronUp, Bell, HardDrive, Send, Play,
+  Shield,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import { api } from '@/lib/api';
@@ -384,6 +385,12 @@ export default function Settings() {
         )}
       </div>
 
+      {/* Alerts Card */}
+      <AlertsCard />
+
+      {/* Backups Card */}
+      <BackupsCard />
+
       {/* System Info Card */}
       <div className="glass p-6">
         <div className="flex items-center gap-3 mb-4">
@@ -415,5 +422,346 @@ export default function Settings() {
         </div>
       </div>
     </Shell>
+  );
+}
+
+/* ---- Alerts Card ---- */
+
+interface AlertSettings {
+  enabled: boolean;
+  webhook_url: string;
+  events: string[];
+  disk_threshold: number;
+  memory_threshold: number;
+}
+
+function AlertsCard() {
+  const [settings, setSettings] = useState<AlertSettings>({
+    enabled: false, webhook_url: '', events: ['app_crash', 'disk_full', 'high_memory'],
+    disk_threshold: 90, memory_threshold: 90,
+  });
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    api.get<AlertSettings>('/alerts').then((res) => {
+      if (res.success && res.data) setSettings(res.data);
+    });
+  }, []);
+
+  async function save() {
+    setSaving(true);
+    const res = await api.put('/alerts', settings);
+    setSaving(false);
+    setMsg(res.success ? 'Saved' : (res.error || 'Failed'));
+    setTimeout(() => setMsg(''), 3000);
+  }
+
+  async function test() {
+    setTesting(true);
+    const res = await api.post<{ message: string }>('/alerts/test');
+    setTesting(false);
+    setMsg(res.success ? 'Test alert sent!' : (res.error || 'Failed'));
+    setTimeout(() => setMsg(''), 3000);
+  }
+
+  function toggleEvent(e: string) {
+    setSettings((s) => ({
+      ...s,
+      events: s.events.includes(e) ? s.events.filter((x) => x !== e) : [...s.events, e],
+    }));
+  }
+
+  return (
+    <div className="glass p-6 mb-6">
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl flex items-center justify-center"
+            style={{ background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.2)' }}>
+            <Bell size={20} className="text-orange-400" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-white">Alerts</h2>
+            <p className="text-xs text-gray-500">Get notified when things go wrong</p>
+          </div>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <span className="text-xs text-gray-500">{settings.enabled ? 'Enabled' : 'Disabled'}</span>
+          <input type="checkbox" checked={settings.enabled}
+            onChange={(e) => setSettings({ ...settings, enabled: e.target.checked })}
+            className="sr-only peer" />
+          <div className="relative w-9 h-5 rounded-full bg-white/10 peer-checked:bg-violet-600 transition-colors">
+            <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${settings.enabled ? 'translate-x-4' : ''}`} />
+          </div>
+        </label>
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <label className="label">Webhook URL (Discord / Slack / Custom)</label>
+          <input className="input" placeholder="https://discord.com/api/webhooks/..."
+            value={settings.webhook_url}
+            onChange={(e) => setSettings({ ...settings, webhook_url: e.target.value })} />
+        </div>
+
+        <div>
+          <label className="label">Events</label>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'app_crash', label: 'App Crash', color: 'red' },
+              { id: 'disk_full', label: 'Disk Full', color: 'amber' },
+              { id: 'high_memory', label: 'High Memory', color: 'orange' },
+            ].map(({ id, label, color }) => (
+              <button key={id} onClick={() => toggleEvent(id)}
+                className={`badge cursor-pointer transition-all ${
+                  settings.events.includes(id)
+                    ? `bg-${color}-500/10 text-${color}-400 border-${color}-500/20`
+                    : 'bg-white/5 text-gray-500 border-white/10'
+                }`}>
+                <Shield size={10} /> {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="label">Disk Threshold (%)</label>
+            <input className="input" type="number" min="50" max="99"
+              value={settings.disk_threshold}
+              onChange={(e) => setSettings({ ...settings, disk_threshold: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="label">Memory Threshold (%)</label>
+            <input className="input" type="number" min="50" max="99"
+              value={settings.memory_threshold}
+              onChange={(e) => setSettings({ ...settings, memory_threshold: Number(e.target.value) })} />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 pt-1">
+          <button onClick={save} className="btn-primary" disabled={saving}>
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+          <button onClick={test} className="btn-secondary" disabled={testing || !settings.webhook_url}>
+            <Send size={13} /> {testing ? 'Sending...' : 'Test Webhook'}
+          </button>
+          {msg && <span className="text-xs text-emerald-400">{msg}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Backups Card ---- */
+
+interface BackupSettings {
+  enabled: boolean;
+  schedule: string;
+  retain_days: number;
+  backup_path: string;
+  s3_enabled: boolean;
+  s3_endpoint: string;
+  s3_bucket: string;
+  s3_key: string;
+  s3_secret: string;
+  s3_region: string;
+}
+
+interface BackupEntry {
+  id: number;
+  type: string;
+  filename: string;
+  size_bytes: number;
+  duration_ms: number;
+  status: string;
+  error: string;
+  created_at: string;
+}
+
+function BackupsCard() {
+  const [settings, setSettings] = useState<BackupSettings>({
+    enabled: false, schedule: 'daily', retain_days: 7, backup_path: '/var/backups/panel',
+    s3_enabled: false, s3_endpoint: '', s3_bucket: '', s3_key: '', s3_secret: '', s3_region: '',
+  });
+  const [history, setHistory] = useState<BackupEntry[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [showS3, setShowS3] = useState(false);
+
+  useEffect(() => {
+    api.get<BackupSettings>('/backups/settings').then((res) => {
+      if (res.success && res.data) {
+        setSettings(res.data);
+        setShowS3(res.data.s3_enabled);
+      }
+    });
+    api.get<BackupEntry[]>('/backups/history').then((res) => {
+      if (res.success && res.data) setHistory(res.data);
+    });
+  }, []);
+
+  async function save() {
+    setSaving(true);
+    const res = await api.put('/backups/settings', settings);
+    setSaving(false);
+    setMsg(res.success ? 'Saved' : (res.error || 'Failed'));
+    setTimeout(() => setMsg(''), 3000);
+  }
+
+  async function runNow() {
+    setRunning(true);
+    const res = await api.post<{ message: string }>('/backups/run');
+    setMsg(res.success ? 'Backup started!' : (res.error || 'Failed'));
+    setTimeout(() => {
+      setRunning(false);
+      setMsg('');
+      // Refresh history
+      api.get<BackupEntry[]>('/backups/history').then((r) => {
+        if (r.success && r.data) setHistory(r.data);
+      });
+    }, 5000);
+  }
+
+  function fmtBytes(b: number) {
+    if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+    if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
+    if (b >= 1e3) return (b / 1e3).toFixed(0) + ' KB';
+    return b + ' B';
+  }
+
+  return (
+    <div className="glass p-6 mb-6">
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl flex items-center justify-center"
+            style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.2)' }}>
+            <HardDrive size={20} className="text-emerald-400" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-white">Backups</h2>
+            <p className="text-xs text-gray-500">Scheduled database and config backups</p>
+          </div>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <span className="text-xs text-gray-500">{settings.enabled ? 'Enabled' : 'Disabled'}</span>
+          <input type="checkbox" checked={settings.enabled}
+            onChange={(e) => setSettings({ ...settings, enabled: e.target.checked })}
+            className="sr-only peer" />
+          <div className="relative w-9 h-5 rounded-full bg-white/10 peer-checked:bg-emerald-600 transition-colors">
+            <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${settings.enabled ? 'translate-x-4' : ''}`} />
+          </div>
+        </label>
+      </div>
+
+      <div className="space-y-4">
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="label">Schedule</label>
+            <select className="input" value={settings.schedule}
+              onChange={(e) => setSettings({ ...settings, schedule: e.target.value })}>
+              <option value="hourly">Hourly</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Retain (days)</label>
+            <input className="input" type="number" min="1" max="365"
+              value={settings.retain_days}
+              onChange={(e) => setSettings({ ...settings, retain_days: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="label">Backup Path</label>
+            <input className="input font-mono text-xs" value={settings.backup_path}
+              onChange={(e) => setSettings({ ...settings, backup_path: e.target.value })} />
+          </div>
+        </div>
+
+        {/* S3 / R2 toggle */}
+        <div>
+          <button onClick={() => setShowS3(!showS3)}
+            className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 transition-colors">
+            {showS3 ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            S3 / R2 Offsite Storage
+          </button>
+          {showS3 && (
+            <div className="mt-3 space-y-3 rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={settings.s3_enabled}
+                  onChange={(e) => setSettings({ ...settings, s3_enabled: e.target.checked })}
+                  className="rounded border-white/20 bg-white/5 text-violet-500" />
+                <span className="text-xs text-gray-300">Upload backups to S3/R2</span>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Endpoint</label>
+                  <input className="input text-xs" placeholder="https://s3.amazonaws.com"
+                    value={settings.s3_endpoint}
+                    onChange={(e) => setSettings({ ...settings, s3_endpoint: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Bucket</label>
+                  <input className="input text-xs" placeholder="my-backups"
+                    value={settings.s3_bucket}
+                    onChange={(e) => setSettings({ ...settings, s3_bucket: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Access Key</label>
+                  <input className="input text-xs" value={settings.s3_key}
+                    onChange={(e) => setSettings({ ...settings, s3_key: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Secret Key</label>
+                  <input className="input text-xs" type="password" value={settings.s3_secret}
+                    onChange={(e) => setSettings({ ...settings, s3_secret: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Region</label>
+                  <input className="input text-xs" placeholder="auto"
+                    value={settings.s3_region}
+                    onChange={(e) => setSettings({ ...settings, s3_region: e.target.value })} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3 pt-1">
+          <button onClick={save} className="btn-primary" disabled={saving}>
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+          <button onClick={runNow} className="btn-secondary" disabled={running}>
+            <Play size={13} /> {running ? 'Running...' : 'Backup Now'}
+          </button>
+          {msg && <span className="text-xs text-emerald-400">{msg}</span>}
+        </div>
+
+        {/* History */}
+        {history.length > 0 && (
+          <div className="mt-2">
+            <p className="label mb-2">Recent Backups</p>
+            <div className="space-y-1.5">
+              {history.slice(0, 5).map((b) => (
+                <div key={b.id} className="flex items-center justify-between rounded-xl px-3 py-2 text-xs"
+                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="flex items-center gap-3">
+                    <span className={`h-2 w-2 rounded-full ${b.status === 'completed' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                    <span className="font-mono text-gray-400">{b.filename}</span>
+                  </div>
+                  <div className="flex items-center gap-4 text-gray-600">
+                    <span>{fmtBytes(b.size_bytes)}</span>
+                    <span>{b.duration_ms}ms</span>
+                    <span>{new Date(b.created_at).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

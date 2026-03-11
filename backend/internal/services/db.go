@@ -117,6 +117,56 @@ var migrations = []struct {
 			ALTER TABLE apps DROP COLUMN IF EXISTS ssl_enabled;
 		`,
 	},
+	{
+		version:     3,
+		description: "Add webhook_secret, max_memory, max_restarts to apps; add alert_settings, backup_settings tables; add health check fields",
+		sql: `
+			ALTER TABLE apps ADD COLUMN IF NOT EXISTS webhook_secret  TEXT NOT NULL DEFAULT '';
+			ALTER TABLE apps ADD COLUMN IF NOT EXISTS max_memory      INTEGER NOT NULL DEFAULT 512;
+			ALTER TABLE apps ADD COLUMN IF NOT EXISTS max_restarts    INTEGER NOT NULL DEFAULT 10;
+
+			CREATE TABLE IF NOT EXISTS alert_settings (
+				id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				enabled     BOOLEAN NOT NULL DEFAULT false,
+				webhook_url TEXT NOT NULL DEFAULT '',
+				events      JSONB NOT NULL DEFAULT '["app_crash","disk_full","high_memory"]',
+				disk_threshold   INTEGER NOT NULL DEFAULT 90,
+				memory_threshold INTEGER NOT NULL DEFAULT 90,
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			CREATE TABLE IF NOT EXISTS backup_settings (
+				id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				enabled     BOOLEAN NOT NULL DEFAULT false,
+				schedule    TEXT NOT NULL DEFAULT 'daily',
+				retain_days INTEGER NOT NULL DEFAULT 7,
+				backup_path TEXT NOT NULL DEFAULT '/var/backups/panel',
+				s3_enabled  BOOLEAN NOT NULL DEFAULT false,
+				s3_endpoint TEXT NOT NULL DEFAULT '',
+				s3_bucket   TEXT NOT NULL DEFAULT '',
+				s3_key      TEXT NOT NULL DEFAULT '',
+				s3_secret   TEXT NOT NULL DEFAULT '',
+				s3_region   TEXT NOT NULL DEFAULT '',
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			CREATE TABLE IF NOT EXISTS backup_history (
+				id          BIGSERIAL PRIMARY KEY,
+				type        TEXT NOT NULL DEFAULT 'full',
+				filename    TEXT NOT NULL,
+				size_bytes  BIGINT NOT NULL DEFAULT 0,
+				duration_ms INTEGER NOT NULL DEFAULT 0,
+				status      TEXT NOT NULL DEFAULT 'completed',
+				error       TEXT NOT NULL DEFAULT '',
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			INSERT INTO alert_settings (enabled) VALUES (false) ON CONFLICT DO NOTHING;
+			INSERT INTO backup_settings (enabled) VALUES (false) ON CONFLICT DO NOTHING;
+		`,
+	},
 }
 
 // InitSchema runs all pending migrations in order and performs cleanup.

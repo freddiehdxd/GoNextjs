@@ -42,6 +42,7 @@ var allowedBins = map[string]string{
 	"unzip":      "/usr/bin/unzip",
 	"tail":       "/usr/bin/tail",
 	"redis-cli": "/usr/bin/redis-cli",
+	"tar":        "/bin/tar",
 }
 
 // Validation regexes

@@ -4,7 +4,7 @@ import {
   ArrowLeft, Play, Square, RotateCcw, Zap, Trash2, Globe, ExternalLink,
   GitBranch, Server, FolderArchive, Rocket, Plus, Check, Copy,
   Activity, ScrollText, Settings2, Upload, Clock, Cpu, MemoryStick,
-  ChevronDown, Pause, Eye, EyeOff,
+  ChevronDown, Pause, Eye, EyeOff, Webhook, RefreshCw,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import StatusBadge from '@/components/StatusBadge';
@@ -248,7 +248,10 @@ function LogsTab({ appName }: { appName: string }) {
   const [loading, setLoading] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
   const [paused, setPaused] = useState(false);
+  const [live, setLive] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
   const containerRef = useRef<HTMLPreElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const fetchLogs = useCallback(async () => {
     const res = await api.get<{ log: string }>(`/logs/app/${appName}/file?type=${logType}&lines=${lines}`);
@@ -258,17 +261,80 @@ function LogsTab({ appName }: { appName: string }) {
     setLoading(false);
   }, [appName, logType, lines]);
 
+  // Polling mode (when not live)
   useEffect(() => {
+    if (live) return;
     setLoading(true);
     fetchLogs();
-  }, [fetchLogs]);
+  }, [fetchLogs, live]);
 
-  // Auto-refresh every 3s unless paused
   useEffect(() => {
-    if (paused) return;
+    if (live || paused) return;
     const iv = setInterval(fetchLogs, 3000);
     return () => clearInterval(iv);
-  }, [fetchLogs, paused]);
+  }, [fetchLogs, paused, live]);
+
+  // WebSocket live mode
+  useEffect(() => {
+    if (!live) {
+      // Clean up WebSocket when switching off
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+        setWsConnected(false);
+      }
+      return;
+    }
+
+    // Build WS URL
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${window.location.host}/api/logs/stream?app=${appName}&type=${logType}`;
+
+    setLog('');
+    setLoading(true);
+
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setWsConnected(true);
+      setLoading(false);
+    };
+
+    ws.onmessage = (event) => {
+      setLog(prev => {
+        const combined = prev + event.data;
+        // Keep last ~5000 lines to avoid unbounded growth
+        const allLines = combined.split('\n');
+        if (allLines.length > 5000) {
+          return allLines.slice(allLines.length - 5000).join('\n');
+        }
+        return combined;
+      });
+    };
+
+    ws.onclose = () => {
+      setWsConnected(false);
+      // If still in live mode, reconnect after 2s
+      if (wsRef.current === ws) {
+        setTimeout(() => {
+          if (wsRef.current === ws) {
+            setLive(false);
+          }
+        }, 2000);
+      }
+    };
+
+    ws.onerror = () => {
+      setWsConnected(false);
+    };
+
+    return () => {
+      ws.close();
+      wsRef.current = null;
+      setWsConnected(false);
+    };
+  }, [live, appName, logType]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -277,35 +343,62 @@ function LogsTab({ appName }: { appName: string }) {
     }
   }, [log, autoScroll]);
 
+  // When switching log type in live mode, reset
+  function switchLogType(type: 'out' | 'error') {
+    if (type === logType) return;
+    setLogType(type);
+    if (live) {
+      // Close and reconnect with new type
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* Controls */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
-          <button onClick={() => setLogType('out')}
+          <button onClick={() => switchLogType('out')}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all
               ${logType === 'out' ? 'bg-violet-500/15 text-violet-400 border border-violet-500/30' : 'text-gray-500 hover:text-gray-300 border border-transparent'}`}>
             stdout
           </button>
-          <button onClick={() => setLogType('error')}
+          <button onClick={() => switchLogType('error')}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all
               ${logType === 'error' ? 'bg-red-500/15 text-red-400 border border-red-500/30' : 'text-gray-500 hover:text-gray-300 border border-transparent'}`}>
             stderr
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <select value={lines} onChange={e => setLines(Number(e.target.value))}
-            className="input !py-1.5 !px-2 text-xs !w-auto">
-            <option value={100}>100 lines</option>
-            <option value={200}>200 lines</option>
-            <option value={500}>500 lines</option>
-            <option value={1000}>1000 lines</option>
-          </select>
-          <button onClick={() => setPaused(!paused)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
-              ${paused ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'}`}>
-            {paused ? <><Play size={11} /> Resume</> : <><Pause size={11} /> Pause</>}
+          {!live && (
+            <select value={lines} onChange={e => setLines(Number(e.target.value))}
+              className="input !py-1.5 !px-2 text-xs !w-auto">
+              <option value={100}>100 lines</option>
+              <option value={200}>200 lines</option>
+              <option value={500}>500 lines</option>
+              <option value={1000}>1000 lines</option>
+            </select>
+          )}
+          <button onClick={() => setLive(!live)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border flex items-center gap-1.5
+              ${live
+                ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                : 'text-gray-500 hover:text-gray-300 border-transparent'}`}>
+            {live && wsConnected && (
+              <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" />
+            )}
+            {live ? 'Live' : 'Go Live'}
           </button>
+          {!live && (
+            <button onClick={() => setPaused(!paused)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
+                ${paused ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'}`}>
+              {paused ? <><Play size={11} /> Resume</> : <><Pause size={11} /> Pause</>}
+            </button>
+          )}
           <button onClick={() => setAutoScroll(!autoScroll)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
               ${autoScroll ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'}`}>
@@ -327,7 +420,9 @@ function LogsTab({ appName }: { appName: string }) {
           </div>
           <span className="text-[10px] text-gray-600 font-mono ml-2">
             {appName} - {logType === 'out' ? 'stdout' : 'stderr'}
-            {!paused && <span className="ml-2 text-emerald-500/60">live</span>}
+            {live && wsConnected && <span className="ml-2 text-rose-400">streaming</span>}
+            {live && !wsConnected && <span className="ml-2 text-amber-500">connecting...</span>}
+            {!live && !paused && <span className="ml-2 text-emerald-500/60">polling</span>}
           </span>
         </div>
         {/* Log content */}
@@ -448,6 +543,12 @@ function ConfigTab({ app, onSaved }: { app: App; onSaved: () => void }) {
           </div>
         </div>
       </div>
+
+      {/* Resource Limits */}
+      <ResourceLimitsCard app={app} onSaved={onSaved} />
+
+      {/* Webhook */}
+      <WebhookCard app={app} onSaved={onSaved} />
 
       {/* Env vars */}
       <div className="card">
@@ -649,6 +750,158 @@ function DeploymentsTab({ app, onAction, acting, onRefresh }: {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ─────────────────────── Resource Limits Card ─────────────────────── */
+
+function ResourceLimitsCard({ app, onSaved }: { app: App; onSaved: () => void }) {
+  const [maxMemory, setMaxMemory] = useState(app.max_memory || 512);
+  const [maxRestarts, setMaxRestarts] = useState(app.max_restarts || 10);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const dirty = maxMemory !== (app.max_memory || 512) || maxRestarts !== (app.max_restarts || 10);
+
+  async function save() {
+    setSaving(true);
+    const res = await api.put(`/apps/${app.name}/settings`, {
+      max_memory: maxMemory,
+      max_restarts: maxRestarts,
+    });
+    setSaving(false);
+    if (res.success) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      onSaved();
+    }
+  }
+
+  return (
+    <div className="card">
+      <h3 className="text-sm font-semibold text-white mb-4">Resource Limits</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="label">Max Memory (MB)</label>
+          <div className="flex items-center gap-3">
+            <input type="number" className="input flex-1" min={64} max={16384} step={64}
+              value={maxMemory} onChange={e => setMaxMemory(Number(e.target.value))} />
+            <span className="text-[10px] text-gray-600 shrink-0">64 – 16,384 MB</span>
+          </div>
+          <p className="text-[10px] text-gray-700 mt-1">PM2 will auto-restart the app if memory exceeds this limit.</p>
+        </div>
+        <div>
+          <label className="label">Max Restarts</label>
+          <div className="flex items-center gap-3">
+            <input type="number" className="input flex-1" min={0} max={100}
+              value={maxRestarts} onChange={e => setMaxRestarts(Number(e.target.value))} />
+            <span className="text-[10px] text-gray-600 shrink-0">0 – 100</span>
+          </div>
+          <p className="text-[10px] text-gray-700 mt-1">Max consecutive unstable restarts before PM2 stops the app.</p>
+        </div>
+      </div>
+      {dirty && (
+        <div className="mt-4 flex items-center gap-3">
+          <button onClick={save} className={`text-xs ${saved ? 'btn-success' : 'btn-primary'}`} disabled={saving}>
+            {saving ? 'Saving...' : saved ? 'Saved' : 'Save Limits'}
+          </button>
+          <button onClick={() => { setMaxMemory(app.max_memory || 512); setMaxRestarts(app.max_restarts || 10); }}
+            className="btn-ghost text-xs">Reset</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────── Webhook Card ─────────────────────── */
+
+function WebhookCard({ app, onSaved }: { app: App; onSaved: () => void }) {
+  const [secret, setSecret] = useState(app.webhook_secret || '');
+  const [webhookUrl, setWebhookUrl] = useState(app.webhook_secret ? `/api/webhook/${app.name}` : '');
+  const [generating, setGenerating] = useState(false);
+  const [copied, setCopied] = useState<'url' | 'secret' | null>(null);
+
+  async function generate() {
+    setGenerating(true);
+    const res = await api.post<{ webhook_secret: string; webhook_url: string }>(`/apps/${app.name}/webhook`);
+    setGenerating(false);
+    if (res.success && res.data) {
+      setSecret(res.data.webhook_secret);
+      setWebhookUrl(res.data.webhook_url);
+      onSaved();
+    }
+  }
+
+  function copyToClipboard(text: string, type: 'url' | 'secret') {
+    navigator.clipboard.writeText(text);
+    setCopied(type);
+    setTimeout(() => setCopied(null), 1500);
+  }
+
+  const fullUrl = secret ? `${window.location.origin}/api/webhook/${app.name}` : '';
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Deploy Webhook</h3>
+          <p className="text-[10px] text-gray-600 mt-0.5">Trigger deploys via HTTP POST from CI/CD or GitHub.</p>
+        </div>
+        <button onClick={generate} disabled={generating}
+          className="btn-secondary text-xs">
+          {generating ? (
+            <span className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full border-2 border-violet-400/30 border-t-violet-400 animate-spin" />
+              Generating...
+            </span>
+          ) : (
+            <><RefreshCw size={12} /> {secret ? 'Regenerate' : 'Generate'}</>
+          )}
+        </button>
+      </div>
+
+      {secret ? (
+        <div className="space-y-3">
+          {/* Webhook URL */}
+          <div>
+            <label className="label">Webhook URL</label>
+            <div className="flex items-center gap-2">
+              <input className="input flex-1 font-mono text-xs" value={fullUrl} readOnly />
+              <button onClick={() => copyToClipboard(fullUrl, 'url')}
+                className="p-1.5 rounded-lg text-gray-600 hover:text-violet-400 hover:bg-violet-500/10 transition-all" title="Copy URL">
+                {copied === 'url' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Secret */}
+          <div>
+            <label className="label">Secret</label>
+            <div className="flex items-center gap-2">
+              <input className="input flex-1 font-mono text-xs" value={secret} readOnly />
+              <button onClick={() => copyToClipboard(secret, 'secret')}
+                className="p-1.5 rounded-lg text-gray-600 hover:text-violet-400 hover:bg-violet-500/10 transition-all" title="Copy Secret">
+                {copied === 'secret' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Usage hint */}
+          <div className="rounded-lg px-3 py-2 text-[10px] text-gray-500 border border-white/[0.04]"
+            style={{ background: 'rgba(255,255,255,0.02)' }}>
+            <p className="font-medium text-gray-400 mb-1">Usage:</p>
+            <code className="text-[10px] text-violet-400 break-all">
+              curl -X POST {fullUrl} -H "X-Webhook-Secret: {secret}"
+            </code>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-white/[0.08] px-4 py-6 text-center">
+          <Webhook size={20} className="text-gray-700 mx-auto mb-2" />
+          <p className="text-xs text-gray-500">No webhook configured. Click "Generate" to create one.</p>
+        </div>
+      )}
     </div>
   );
 }

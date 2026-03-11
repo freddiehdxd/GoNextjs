@@ -14,6 +14,7 @@ import Files from '@/pages/Files';
 import Logs from '@/pages/Logs';
 import Services from '@/pages/Services';
 import Settings from '@/pages/Settings';
+import AuditLog from '@/pages/AuditLog';
 import NotFound from '@/pages/NotFound';
 
 // ── Auth Context ────────────────────────────────────────────────────────────
@@ -115,6 +116,7 @@ export default function App() {
         <Route path="/files" element={<ProtectedRoute><Files /></ProtectedRoute>} />
         <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+        <Route path="/audit" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </AuthProvider>

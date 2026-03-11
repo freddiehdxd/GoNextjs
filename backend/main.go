@@ -55,10 +55,19 @@ func main() {
 	dbHandler := handlers.NewDatabasesHandler(db, cfg, exec)
 	redisHandler := handlers.NewRedisHandler(exec)
 	filesHandler := handlers.NewFilesHandler(cfg)
-	logsHandler := handlers.NewLogsHandler(pm2, exec)
+	logsHandler := handlers.NewLogsHandler(pm2, exec, cfg)
 	statsHandler := handlers.NewStatsHandler(pm2, cfg, db)
 	updateHandler := handlers.NewUpdateHandler(cfg)
 	servicesHandler := handlers.NewServicesHandler(exec)
+	auditHandler := handlers.NewAuditHandler(db)
+	alertsHandler := handlers.NewAlertsHandler(db, pm2)
+	backupHandler := handlers.NewBackupHandler(db, exec, cfg)
+
+	// Health checker with alert callback
+	healthChecker := handlers.NewHealthChecker(db, pm2, func(eventType, title, desc string) {
+		// Forward health alerts to the alerts handler's webhook
+		alertsHandler.SendAlert(eventType, title, desc)
+	})
 
 	// Create router
 	r := chi.NewRouter()
@@ -89,6 +98,12 @@ func main() {
 	// WebSocket for live stats (auth checked inside handler)
 	r.Get("/api/stats/ws", statsHandler.WebSocket)
 
+	// WebSocket for real-time log streaming (auth checked inside handler)
+	r.Get("/api/logs/stream", logsHandler.StreamLogs)
+
+	// Webhook endpoint (no auth — validates secret in handler)
+	r.Post("/api/webhook/{name}", appsHandler.Webhook)
+
 	// Auth routes (no auth middleware)
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(chimw.Compress(5))
@@ -115,6 +130,8 @@ func main() {
 			r.Get("/apps/{name}/env-file", appsHandler.ReadEnvFiles)
 			r.Put("/apps/{name}/env", appsHandler.UpdateEnv)
 			r.Post("/apps/{name}/deploy-zip", appsHandler.UploadProject)
+			r.Put("/apps/{name}/settings", appsHandler.UpdateSettings)
+			r.Post("/apps/{name}/webhook", appsHandler.GenerateWebhook)
 
 			// Domains
 			r.Post("/domains", domainsHandler.Add)
@@ -155,6 +172,23 @@ func main() {
 
 			// Stats
 			r.Get("/stats", statsHandler.Get)
+
+			// Health checks
+			r.Get("/health/apps", healthChecker.GetResults)
+
+			// Audit log
+			r.Get("/audit", auditHandler.List)
+
+			// Alerts
+			r.Get("/alerts", alertsHandler.Get)
+			r.Put("/alerts", alertsHandler.Update)
+			r.Post("/alerts/test", alertsHandler.TestAlert)
+
+			// Backups
+			r.Get("/backups/settings", backupHandler.GetSettings)
+			r.Put("/backups/settings", backupHandler.UpdateSettings)
+			r.Post("/backups/run", backupHandler.RunNow)
+			r.Get("/backups/history", backupHandler.History)
 
 			// Panel Update (check + log are normal JSON)
 			r.Get("/update/check", updateHandler.Check)

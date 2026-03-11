@@ -58,6 +58,7 @@ export interface App {
   port: number; domains: Domain[];
   status: string; cpu: number; memory: number;
   env_vars: Record<string, string>; created_at: string;
+  webhook_secret?: string; max_memory: number; max_restarts: number;
 }
 export interface ManagedDb {
   id: string; name: string; db_user: string; created_at: string;

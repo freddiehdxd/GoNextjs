@@ -8,6 +8,7 @@ REPO_URL="${2:?repo_url is required}"
 BRANCH="${3:-main}"
 PORT="${4:?port is required}"
 PM2_MODE="${5:-restart}"   # "restart" (default) or "reload" (zero-downtime)
+MAX_MEMORY="${6:-512}"     # max memory in MB for PM2 max_memory_restart
 APPS_DIR="${APPS_DIR:-/var/www/apps}"
 
 # ── Validation ─────────────────────────────────────────────────────────────
@@ -150,7 +151,7 @@ module.exports = {
     env: {
 ${ENV_BLOCK}
     },
-    max_memory_restart: '512M',
+    max_memory_restart: '${MAX_MEMORY}M',
     error_file:  '/var/log/panel/pm2-${APP_NAME}-error.log',
     out_file:    '/var/log/panel/pm2-${APP_NAME}-out.log',
     merge_logs:  true,

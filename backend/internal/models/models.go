@@ -13,19 +13,59 @@ type Domain struct {
 
 // App represents a deployed application
 type App struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	RepoURL string            `json:"repo_url"`
-	Branch  string            `json:"branch"`
-	Port    int               `json:"port"`
-	Domains []Domain          `json:"domains"`
-	EnvVars map[string]string `json:"env_vars"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	RepoURL       string            `json:"repo_url"`
+	Branch        string            `json:"branch"`
+	Port          int               `json:"port"`
+	Domains       []Domain          `json:"domains"`
+	EnvVars       map[string]string `json:"env_vars"`
+	WebhookSecret string            `json:"webhook_secret,omitempty"`
+	MaxMemory     int               `json:"max_memory"`
+	MaxRestarts   int               `json:"max_restarts"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
 	// Enriched fields from PM2 (not stored in DB)
 	Status string  `json:"status,omitempty"`
 	CPU    float64 `json:"cpu,omitempty"`
 	Memory int64   `json:"memory,omitempty"`
+}
+
+// AlertSettings holds notification configuration
+type AlertSettings struct {
+	ID              string   `json:"id"`
+	Enabled         bool     `json:"enabled"`
+	WebhookURL      string   `json:"webhook_url"`
+	Events          []string `json:"events"`
+	DiskThreshold   int      `json:"disk_threshold"`
+	MemoryThreshold int      `json:"memory_threshold"`
+}
+
+// BackupSettings holds backup configuration
+type BackupSettings struct {
+	ID         string `json:"id"`
+	Enabled    bool   `json:"enabled"`
+	Schedule   string `json:"schedule"`
+	RetainDays int    `json:"retain_days"`
+	BackupPath string `json:"backup_path"`
+	S3Enabled  bool   `json:"s3_enabled"`
+	S3Endpoint string `json:"s3_endpoint"`
+	S3Bucket   string `json:"s3_bucket"`
+	S3Key      string `json:"s3_key"`
+	S3Secret   string `json:"s3_secret,omitempty"`
+	S3Region   string `json:"s3_region"`
+}
+
+// BackupEntry holds a backup history record
+type BackupEntry struct {
+	ID         int64     `json:"id"`
+	Type       string    `json:"type"`
+	Filename   string    `json:"filename"`
+	SizeBytes  int64     `json:"size_bytes"`
+	DurationMs int       `json:"duration_ms"`
+	Status     string    `json:"status"`
+	Error      string    `json:"error,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // Database represents a managed PostgreSQL database

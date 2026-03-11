@@ -4,7 +4,7 @@ import { clearToken } from '@/lib/api';
 import {
   LayoutDashboard, Server, Globe, ShieldCheck, Database,
   FolderOpen, FileText, Cpu, LogOut, Search, ChevronRight,
-  Zap, X, Command, Settings, Wrench,
+  Zap, X, Command, Settings, Wrench, ScrollText,
 } from 'lucide-react';
 
 const NAV_LINKS = [
@@ -17,6 +17,7 @@ const NAV_LINKS = [
   { href: '/services',  label: 'Services',    icon: Wrench,           color: 'text-teal-400'    },
   { href: '/files',     label: 'Files',       icon: FolderOpen,       color: 'text-orange-400'  },
   { href: '/logs',      label: 'Logs',        icon: FileText,         color: 'text-pink-400'    },
+  { href: '/audit',     label: 'Audit Log',   icon: ScrollText,       color: 'text-sky-400'     },
   { href: '/settings',  label: 'Settings',    icon: Settings,         color: 'text-gray-400'    },
 ];
 

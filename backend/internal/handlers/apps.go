@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -46,7 +48,7 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	rows, err := h.db.Query(ctx,
-		"SELECT id, name, repo_url, branch, port, env_vars, created_at, updated_at FROM apps ORDER BY created_at DESC")
+		"SELECT id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, created_at, updated_at FROM apps ORDER BY created_at DESC")
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to fetch apps")
 		return
@@ -58,7 +60,7 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 		var app models.App
 		var envJSON []byte
 		if err := rows.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-			&envJSON, &app.CreatedAt, &app.UpdatedAt); err != nil {
+			&envJSON, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts, &app.CreatedAt, &app.UpdatedAt); err != nil {
 			Error(w, http.StatusInternalServerError, "Failed to scan app")
 			return
 		}
@@ -202,7 +204,7 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Deploy or create empty directory
 	if body.RepoURL != "" {
 		result, err := h.exec.RunScript("deploy_next_app.sh",
-			body.Name, body.RepoURL, body.Branch, fmt.Sprintf("%d", port))
+			body.Name, body.RepoURL, body.Branch, fmt.Sprintf("%d", port), "restart", "512")
 		if err != nil {
 			Error(w, http.StatusInternalServerError, "Deploy failed")
 			return
@@ -234,10 +236,10 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	err = h.db.QueryRow(ctx,
 		`INSERT INTO apps (name, repo_url, branch, port, env_vars)
 		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, name, repo_url, branch, port, env_vars, created_at, updated_at`,
+		 RETURNING id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, created_at, updated_at`,
 		body.Name, body.RepoURL, body.Branch, port, envJSON,
 	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&envBytes, &app.CreatedAt, &app.UpdatedAt)
+		&envBytes, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts, &app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to save app")
 		return
@@ -315,7 +317,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 		h.writeEnvFile(app.Name, app.EnvVars)
 
 		result, err := h.exec.RunScript("deploy_next_app.sh",
-			app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port))
+			app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
 		if err != nil {
 			Error(w, http.StatusInternalServerError, "Rebuild failed")
 			return
@@ -332,7 +334,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 
 		// Install dependencies, build, and start via PM2 (for manually uploaded apps)
 		result, err := h.exec.RunScript("setup_app.sh",
-			app.Name, fmt.Sprintf("%d", app.Port))
+			app.Name, fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
 		if err != nil {
 			log.Printf("Setup failed for %s: %v", app.Name, err)
 			Error(w, http.StatusInternalServerError, "Setup failed")
@@ -350,7 +352,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 
 		// Zero-downtime deploy: install, build, then PM2 reload (keeps old process serving until new one is ready)
 		result, err := h.exec.RunScript("setup_app.sh",
-			app.Name, fmt.Sprintf("%d", app.Port), "reload")
+			app.Name, fmt.Sprintf("%d", app.Port), "reload", fmt.Sprintf("%d", app.MaxMemory))
 		if err != nil {
 			log.Printf("Setup-reload failed for %s: %v", app.Name, err)
 			Error(w, http.StatusInternalServerError, "Zero-downtime deploy failed")
@@ -373,7 +375,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 
 		// Zero-downtime rebuild: pull, install, build, then PM2 reload
 		result, err := h.exec.RunScript("deploy_next_app.sh",
-			app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "reload")
+			app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "reload", fmt.Sprintf("%d", app.MaxMemory))
 		if err != nil {
 			Error(w, http.StatusInternalServerError, "Zero-downtime rebuild failed")
 			return
@@ -415,10 +417,10 @@ func (h *AppsHandler) UpdateEnv(w http.ResponseWriter, r *http.Request) {
 	var envBytes []byte
 	err = h.db.QueryRow(ctx,
 		`UPDATE apps SET env_vars = $1, updated_at = NOW() WHERE name = $2
-		 RETURNING id, name, repo_url, branch, port, env_vars, created_at, updated_at`,
+		 RETURNING id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, created_at, updated_at`,
 		envJSON, name,
 	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&envBytes, &app.CreatedAt, &app.UpdatedAt)
+		&envBytes, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts, &app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update env vars")
 		return
@@ -438,15 +440,132 @@ func (h *AppsHandler) UpdateEnv(w http.ResponseWriter, r *http.Request) {
 	Success(w, app)
 }
 
+// UpdateSettings handles PUT /api/apps/:name/settings
+func (h *AppsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	var body struct {
+		MaxMemory   *int `json:"max_memory"`
+		MaxRestarts *int `json:"max_restarts"`
+	}
+	if err := ReadJSON(r, &body); err != nil {
+		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	ctx := r.Context()
+	app, err := h.getAppByName(ctx, name)
+	if err != nil {
+		Error(w, http.StatusNotFound, "App not found")
+		return
+	}
+
+	if body.MaxMemory != nil {
+		if *body.MaxMemory < 64 || *body.MaxMemory > 16384 {
+			Error(w, http.StatusBadRequest, "max_memory must be between 64 and 16384 MB")
+			return
+		}
+		app.MaxMemory = *body.MaxMemory
+	}
+	if body.MaxRestarts != nil {
+		if *body.MaxRestarts < 0 || *body.MaxRestarts > 100 {
+			Error(w, http.StatusBadRequest, "max_restarts must be between 0 and 100")
+			return
+		}
+		app.MaxRestarts = *body.MaxRestarts
+	}
+
+	_, err = h.db.Exec(ctx,
+		"UPDATE apps SET max_memory = $1, max_restarts = $2, updated_at = NOW() WHERE name = $3",
+		app.MaxMemory, app.MaxRestarts, name)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to update settings")
+		return
+	}
+
+	Success(w, map[string]interface{}{
+		"max_memory":   app.MaxMemory,
+		"max_restarts": app.MaxRestarts,
+	})
+}
+
+// GenerateWebhook handles POST /api/apps/:name/webhook — generates a webhook secret
+func (h *AppsHandler) GenerateWebhook(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	ctx := r.Context()
+	_, err := h.getAppByName(ctx, name)
+	if err != nil {
+		Error(w, http.StatusNotFound, "App not found")
+		return
+	}
+
+	// Generate a random 32-char hex secret
+	secret := generateSecret(32)
+
+	_, err = h.db.Exec(ctx,
+		"UPDATE apps SET webhook_secret = $1, updated_at = NOW() WHERE name = $2",
+		secret, name)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to generate webhook")
+		return
+	}
+
+	Success(w, map[string]string{
+		"webhook_secret": secret,
+		"webhook_url":    fmt.Sprintf("/api/webhook/%s", name),
+	})
+}
+
+// Webhook handles POST /api/webhook/:name — unauthenticated, validates secret
+func (h *AppsHandler) Webhook(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	ctx := r.Context()
+	app, err := h.getAppByName(ctx, name)
+	if err != nil {
+		Error(w, http.StatusNotFound, "Not found")
+		return
+	}
+
+	if app.WebhookSecret == "" {
+		Error(w, http.StatusForbidden, "Webhook not configured")
+		return
+	}
+
+	// Check secret from header or query param
+	secret := r.Header.Get("X-Webhook-Secret")
+	if secret == "" {
+		secret = r.URL.Query().Get("secret")
+	}
+	if secret != app.WebhookSecret {
+		Error(w, http.StatusUnauthorized, "Invalid secret")
+		return
+	}
+
+	// Trigger rebuild or setup based on app type
+	go func() {
+		if app.RepoURL != "" {
+			h.exec.RunScript("deploy_next_app.sh",
+				app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "reload", fmt.Sprintf("%d", app.MaxMemory))
+		} else {
+			h.exec.RunScript("setup_app.sh",
+				app.Name, fmt.Sprintf("%d", app.Port), "reload", fmt.Sprintf("%d", app.MaxMemory))
+		}
+	}()
+
+	Success(w, map[string]string{"message": "Deploy triggered"})
+}
+
 // getAppByName fetches an app from the database by name
 func (h *AppsHandler) getAppByName(ctx context.Context, name string) (*models.App, error) {
 	var app models.App
 	var envJSON []byte
 	err := h.db.QueryRow(ctx,
-		"SELECT id, name, repo_url, branch, port, env_vars, created_at, updated_at FROM apps WHERE name = $1",
+		"SELECT id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, created_at, updated_at FROM apps WHERE name = $1",
 		name,
 	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&envJSON, &app.CreatedAt, &app.UpdatedAt)
+		&envJSON, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts, &app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -704,4 +823,10 @@ func sanitizeDeployError(stderr string) string {
 		return "Deploy script failed"
 	}
 	return msg
+}
+
+func generateSecret(length int) string {
+	b := make([]byte, length/2)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
