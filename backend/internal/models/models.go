@@ -283,6 +283,115 @@ type PgConnInfo struct {
 	Count int    `json:"count"`
 }
 
+// PgDbDetail is the detailed response for GET /api/databases/{name}/detail
+type PgDbDetail struct {
+	// Basic info
+	Name      string `json:"name"`
+	Owner     string `json:"owner"`
+	Encoding  string `json:"encoding"`
+	Collation string `json:"collation"`
+	Size      int64  `json:"size"`     // bytes
+	SizeHuman string `json:"sizeHuman"`
+	CreatedAt string `json:"created_at"`
+
+	// From pg_stat_database
+	NumBackends int     `json:"numBackends"`
+	TxCommit    int64   `json:"txCommit"`
+	TxRollback  int64   `json:"txRollback"`
+	CacheHit    float64 `json:"cacheHit"` // percentage
+	BlksRead    int64   `json:"blksRead"`
+	BlksHit     int64   `json:"blksHit"`
+	TupFetched  int64   `json:"tupFetched"`
+	TupReturned int64   `json:"tupReturned"`
+	TupInserted int64   `json:"tupInserted"`
+	TupUpdated  int64   `json:"tupUpdated"`
+	TupDeleted  int64   `json:"tupDeleted"`
+	Conflicts   int64   `json:"conflicts"`
+	Deadlocks   int64   `json:"deadlocks"`
+	TempFiles   int64   `json:"tempFiles"`
+	TempBytes   int64   `json:"tempBytes"`
+
+	// Connection string (masked password)
+	ConnectionString string `json:"connectionString"`
+
+	// Tables
+	Tables []PgTableInfo `json:"tables"`
+
+	// Indexes
+	Indexes []PgIndexInfo `json:"indexes"`
+
+	// Active queries on this database
+	ActiveQueries []PgSlowQuery `json:"activeQueries"`
+
+	// Connections to this database
+	Connections []PgConnInfo `json:"connections"`
+
+	// Slow query log (queries > 1s from pg_stat_statements if available)
+	SlowQueries []PgStatStatement `json:"slowQueries"`
+
+	// Locks
+	Locks []PgLockInfo `json:"locks"`
+}
+
+// PgTableInfo represents table-level stats
+type PgTableInfo struct {
+	Schema      string  `json:"schema"`
+	Name        string  `json:"name"`
+	Size        int64   `json:"size"` // bytes
+	SizeHuman   string  `json:"sizeHuman"`
+	TotalSize   int64   `json:"totalSize"` // including indexes + toast
+	TotalHuman  string  `json:"totalHuman"`
+	RowEstimate int64   `json:"rowEstimate"`
+	SeqScan     int64   `json:"seqScan"`
+	SeqTupRead  int64   `json:"seqTupRead"`
+	IdxScan     int64   `json:"idxScan"`
+	IdxTupFetch int64   `json:"idxTupFetch"`
+	InsertCount int64   `json:"insertCount"`
+	UpdateCount int64   `json:"updateCount"`
+	DeleteCount int64   `json:"deleteCount"`
+	LiveTup     int64   `json:"liveTup"`
+	DeadTup     int64   `json:"deadTup"`
+	LastVacuum  *string `json:"lastVacuum"`
+	LastAnalyze *string `json:"lastAnalyze"`
+}
+
+// PgIndexInfo represents index-level stats
+type PgIndexInfo struct {
+	Schema    string `json:"schema"`
+	Table     string `json:"table"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"` // bytes
+	SizeHuman string `json:"sizeHuman"`
+	IdxScan   int64  `json:"idxScan"`
+	IdxTupRead  int64 `json:"idxTupRead"`
+	IdxTupFetch int64 `json:"idxTupFetch"`
+	Unused    bool   `json:"unused"` // idxScan == 0
+}
+
+// PgStatStatement represents a row from pg_stat_statements
+type PgStatStatement struct {
+	Query        string  `json:"query"`
+	Calls        int64   `json:"calls"`
+	TotalTime    float64 `json:"totalTime"`    // ms
+	MeanTime     float64 `json:"meanTime"`     // ms
+	MinTime      float64 `json:"minTime"`      // ms
+	MaxTime      float64 `json:"maxTime"`      // ms
+	Rows         int64   `json:"rows"`
+	SharedBlksHit   int64 `json:"sharedBlksHit"`
+	SharedBlksRead  int64 `json:"sharedBlksRead"`
+}
+
+// PgLockInfo represents active locks
+type PgLockInfo struct {
+	PID       int    `json:"pid"`
+	Mode      string `json:"mode"`
+	LockType  string `json:"lockType"`
+	Relation  string `json:"relation"`
+	Granted   bool   `json:"granted"`
+	WaitStart string `json:"waitStart,omitempty"`
+	Query     string `json:"query"`
+}
+
 // ---- Redis Monitoring ----
 
 // RedisStats is the response for GET /api/redis/stats

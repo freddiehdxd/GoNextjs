@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -26,6 +27,8 @@ type Config struct {
 	PortStart     int
 	PortEnd       int
 	DBHost        string
+	DBUser        string
+	DBPassword    string
 	Production    bool
 }
 
@@ -49,6 +52,12 @@ func Load() (*Config, error) {
 		PortEnd:       getEnvInt("APP_PORT_END", 3999),
 		DBHost:        getEnv("DB_HOST", "localhost"),
 		Production:    getEnv("PANEL_ENV", getEnv("NODE_ENV", "production")) == "production",
+	}
+
+	// Parse DB user/password from DATABASE_URL for connecting to managed databases
+	if parsed, err := url.Parse(c.DatabaseURL); err == nil && parsed.User != nil {
+		c.DBUser = parsed.User.Username()
+		c.DBPassword, _ = parsed.User.Password()
 	}
 
 	// Determine cookie secure flag

@@ -315,6 +315,253 @@ func (h *DatabasesHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	Success(w, overview)
 }
 
+// Detail handles GET /api/databases/{name}/detail — detailed stats for a single database
+func (h *DatabasesHandler) Detail(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if !services.ValidatePgIdentifier(name) {
+		Error(w, http.StatusBadRequest, "Invalid database name")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	// Verify the database exists in managed_databases
+	var dbUser string
+	err := h.db.QueryRow(ctx,
+		"SELECT db_user FROM managed_databases WHERE name = $1", name).Scan(&dbUser)
+	if err != nil {
+		Error(w, http.StatusNotFound, "Database not found")
+		return
+	}
+
+	detail := models.PgDbDetail{
+		Name:             name,
+		Owner:            dbUser,
+		ConnectionString: fmt.Sprintf("postgresql://%s:***@localhost:5432/%s", dbUser, name),
+	}
+
+	// Database size
+	_ = h.db.QueryRow(ctx,
+		"SELECT pg_database_size($1)", name).Scan(&detail.Size)
+	detail.SizeHuman = formatDbBytes(detail.Size)
+
+	// Database metadata (encoding, collation)
+	_ = h.db.QueryRow(ctx, `
+		SELECT pg_encoding_to_char(encoding),
+		       datcollate
+		FROM pg_database WHERE datname = $1`, name).Scan(&detail.Encoding, &detail.Collation)
+
+	// Stats from pg_stat_database
+	_ = h.db.QueryRow(ctx, `
+		SELECT numbackends,
+		       xact_commit, xact_rollback,
+		       COALESCE(ROUND(blks_hit::numeric / NULLIF(blks_hit + blks_read, 0) * 100, 2), 0),
+		       blks_read, blks_hit,
+		       tup_fetched, tup_returned, tup_inserted, tup_updated, tup_deleted,
+		       conflicts, deadlocks, temp_files, temp_bytes
+		FROM pg_stat_database WHERE datname = $1`, name).Scan(
+		&detail.NumBackends,
+		&detail.TxCommit, &detail.TxRollback,
+		&detail.CacheHit,
+		&detail.BlksRead, &detail.BlksHit,
+		&detail.TupFetched, &detail.TupReturned, &detail.TupInserted, &detail.TupUpdated, &detail.TupDeleted,
+		&detail.Conflicts, &detail.Deadlocks, &detail.TempFiles, &detail.TempBytes)
+
+	// Connection breakdown for this database
+	connRows, err := h.db.Query(ctx, `
+		SELECT COALESCE(state, 'unknown'), COUNT(*)
+		FROM pg_stat_activity
+		WHERE datname = $1 AND backend_type = 'client backend'
+		GROUP BY state ORDER BY COUNT(*) DESC`, name)
+	if err == nil {
+		defer connRows.Close()
+		for connRows.Next() {
+			var ci models.PgConnInfo
+			if connRows.Scan(&ci.State, &ci.Count) == nil {
+				detail.Connections = append(detail.Connections, ci)
+			}
+		}
+	}
+
+	// Active queries on this database
+	qRows, err := h.db.Query(ctx, `
+		SELECT pid, COALESCE(datname,''), COALESCE(usename,''),
+		       EXTRACT(epoch FROM (now() - query_start)),
+		       COALESCE(state,''), LEFT(query, 500),
+		       COALESCE(wait_event_type || ':' || wait_event, '')
+		FROM pg_stat_activity
+		WHERE datname = $1 AND state = 'active' AND pid != pg_backend_pid()
+		  AND query NOT LIKE '%pg_stat%'
+		ORDER BY query_start ASC LIMIT 50`, name)
+	if err == nil {
+		defer qRows.Close()
+		for qRows.Next() {
+			var sq models.PgSlowQuery
+			if qRows.Scan(&sq.PID, &sq.Database, &sq.User, &sq.Duration,
+				&sq.State, &sq.Query, &sq.WaitEvent) == nil {
+				sq.Duration = math.Round(sq.Duration*1000) / 1000
+				detail.ActiveQueries = append(detail.ActiveQueries, sq)
+			}
+		}
+	}
+
+	// Table stats — connect to the target database to read pg_stat_user_tables
+	// We need to query the target database directly for table/index info.
+	// Build a connection to the target DB using the panel superuser credentials.
+	targetConnStr := fmt.Sprintf("postgresql://%s:%s@%s:5432/%s",
+		h.cfg.DBUser, h.cfg.DBPassword, h.cfg.DBHost, name)
+
+	targetDB, err := services.ConnectDB(ctx, targetConnStr)
+	if err == nil {
+		defer targetDB.Close()
+
+		// Tables
+		tblRows, err := targetDB.Query(ctx, `
+			SELECT schemaname, relname,
+			       pg_relation_size(relid),
+			       pg_total_relation_size(relid),
+			       n_live_tup,
+			       seq_scan, seq_tup_read,
+			       COALESCE(idx_scan, 0), COALESCE(idx_tup_fetch, 0),
+			       n_tup_ins, n_tup_upd, n_tup_del,
+			       n_live_tup, n_dead_tup,
+			       to_char(last_vacuum, 'YYYY-MM-DD HH24:MI'),
+			       to_char(last_analyze, 'YYYY-MM-DD HH24:MI')
+			FROM pg_stat_user_tables
+			ORDER BY pg_total_relation_size(relid) DESC
+			LIMIT 100`)
+		if err == nil {
+			defer tblRows.Close()
+			for tblRows.Next() {
+				var t models.PgTableInfo
+				if tblRows.Scan(&t.Schema, &t.Name,
+					&t.Size, &t.TotalSize, &t.RowEstimate,
+					&t.SeqScan, &t.SeqTupRead,
+					&t.IdxScan, &t.IdxTupFetch,
+					&t.InsertCount, &t.UpdateCount, &t.DeleteCount,
+					&t.LiveTup, &t.DeadTup,
+					&t.LastVacuum, &t.LastAnalyze) == nil {
+					t.SizeHuman = formatDbBytes(t.Size)
+					t.TotalHuman = formatDbBytes(t.TotalSize)
+					detail.Tables = append(detail.Tables, t)
+				}
+			}
+		}
+
+		// Indexes
+		idxRows, err := targetDB.Query(ctx, `
+			SELECT schemaname, relname, indexrelname,
+			       pg_relation_size(indexrelid),
+			       idx_scan, idx_tup_read, idx_tup_fetch
+			FROM pg_stat_user_indexes
+			ORDER BY pg_relation_size(indexrelid) DESC
+			LIMIT 100`)
+		if err == nil {
+			defer idxRows.Close()
+			for idxRows.Next() {
+				var idx models.PgIndexInfo
+				if idxRows.Scan(&idx.Schema, &idx.Table, &idx.Name,
+					&idx.Size, &idx.IdxScan, &idx.IdxTupRead, &idx.IdxTupFetch) == nil {
+					idx.SizeHuman = formatDbBytes(idx.Size)
+					idx.Unused = idx.IdxScan == 0
+					detail.Indexes = append(detail.Indexes, idx)
+				}
+			}
+		}
+
+		// Slow queries from pg_stat_statements (if extension is available)
+		stmtRows, err := targetDB.Query(ctx, `
+			SELECT LEFT(query, 500), calls,
+			       total_exec_time, mean_exec_time, min_exec_time, max_exec_time,
+			       rows, shared_blks_hit, shared_blks_read
+			FROM pg_stat_statements
+			WHERE dbid = (SELECT oid FROM pg_database WHERE datname = $1)
+			  AND calls > 0
+			ORDER BY mean_exec_time DESC
+			LIMIT 20`, name)
+		if err == nil {
+			defer stmtRows.Close()
+			for stmtRows.Next() {
+				var s models.PgStatStatement
+				if stmtRows.Scan(&s.Query, &s.Calls,
+					&s.TotalTime, &s.MeanTime, &s.MinTime, &s.MaxTime,
+					&s.Rows, &s.SharedBlksHit, &s.SharedBlksRead) == nil {
+					// Round to 3 decimal places
+					s.TotalTime = math.Round(s.TotalTime*1000) / 1000
+					s.MeanTime = math.Round(s.MeanTime*1000) / 1000
+					s.MinTime = math.Round(s.MinTime*1000) / 1000
+					s.MaxTime = math.Round(s.MaxTime*1000) / 1000
+					detail.SlowQueries = append(detail.SlowQueries, s)
+				}
+			}
+		}
+
+		// Locks on this database
+		lockRows, err := targetDB.Query(ctx, `
+			SELECT l.pid, l.mode, l.locktype,
+			       COALESCE(c.relname, ''),
+			       l.granted,
+			       COALESCE(to_char(l.waitstart, 'YYYY-MM-DD HH24:MI:SS'), ''),
+			       COALESCE(LEFT(a.query, 200), '')
+			FROM pg_locks l
+			LEFT JOIN pg_class c ON c.oid = l.relation
+			LEFT JOIN pg_stat_activity a ON a.pid = l.pid
+			WHERE l.database = (SELECT oid FROM pg_database WHERE datname = $1)
+			ORDER BY l.granted ASC, l.pid
+			LIMIT 50`, name)
+		if err == nil {
+			defer lockRows.Close()
+			for lockRows.Next() {
+				var lk models.PgLockInfo
+				if lockRows.Scan(&lk.PID, &lk.Mode, &lk.LockType,
+					&lk.Relation, &lk.Granted, &lk.WaitStart, &lk.Query) == nil {
+					detail.Locks = append(detail.Locks, lk)
+				}
+			}
+		}
+	}
+
+	// Ensure non-nil slices
+	if detail.Tables == nil {
+		detail.Tables = []models.PgTableInfo{}
+	}
+	if detail.Indexes == nil {
+		detail.Indexes = []models.PgIndexInfo{}
+	}
+	if detail.ActiveQueries == nil {
+		detail.ActiveQueries = []models.PgSlowQuery{}
+	}
+	if detail.Connections == nil {
+		detail.Connections = []models.PgConnInfo{}
+	}
+	if detail.SlowQueries == nil {
+		detail.SlowQueries = []models.PgStatStatement{}
+	}
+	if detail.Locks == nil {
+		detail.Locks = []models.PgLockInfo{}
+	}
+
+	Success(w, detail)
+}
+
+func formatDbBytes(b int64) string {
+	if b >= 1e12 {
+		return fmt.Sprintf("%.1f TB", float64(b)/1e12)
+	}
+	if b >= 1e9 {
+		return fmt.Sprintf("%.1f GB", float64(b)/1e9)
+	}
+	if b >= 1e6 {
+		return fmt.Sprintf("%.1f MB", float64(b)/1e6)
+	}
+	if b >= 1e3 {
+		return fmt.Sprintf("%.0f KB", float64(b)/1e3)
+	}
+	return fmt.Sprintf("%d B", b)
+}
+
 // Backup handles GET /api/databases/{name}/backup — downloads a pg_dump of the database
 func (h *DatabasesHandler) Backup(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
