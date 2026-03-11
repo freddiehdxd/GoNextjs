@@ -63,7 +63,7 @@ export default function Nav() {
           </div>
           <div>
             <span className="text-sm font-bold text-white tracking-tight">ServerPanel</span>
-            <span className="block text-[10px] text-gray-600 leading-none mt-0.5">Control Center</span>
+            <span className="block text-[10px] text-gray-500 leading-none mt-0.5">Control Center</span>
           </div>
         </div>
 
@@ -71,7 +71,7 @@ export default function Nav() {
         <div className="px-3 pt-4 pb-2 shrink-0">
           <button
             onClick={() => { setShowSearch(true); setTimeout(() => searchRef.current?.focus(), 50); }}
-            className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs text-gray-600 hover:text-gray-400 transition-all duration-200"
+            className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs text-gray-400 hover:text-gray-200 transition-all duration-200"
             style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
           >
             <Search size={13} />
@@ -84,13 +84,13 @@ export default function Nav() {
 
         {/* Links */}
         <nav className="flex-1 overflow-y-auto px-3 py-1 space-y-0.5">
-          <p className="px-3 pt-3 pb-2 text-[10px] font-semibold text-gray-700 uppercase tracking-widest">Menu</p>
+          <p className="px-3 pt-3 pb-2 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Menu</p>
           {NAV_LINKS.map(({ href, label, icon: Icon, color }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
               <Link key={href} to={href}
                 className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150
-                  ${active ? 'text-white' : 'text-gray-500 hover:text-gray-200'}`}
+                  ${active ? 'text-white' : 'text-gray-300 hover:text-white'}`}
                 style={active ? {
                   background: 'rgba(139,92,246,0.12)',
                   border: '1px solid rgba(139,92,246,0.2)',
@@ -98,7 +98,7 @@ export default function Nav() {
                   border: '1px solid transparent',
                 }}
               >
-                <Icon size={15} className={active ? 'text-violet-400' : `${color} opacity-50 group-hover:opacity-90 transition-opacity`} />
+                <Icon size={15} className={active ? 'text-violet-400' : `${color} opacity-80 group-hover:opacity-100 transition-opacity`} />
                 <span className="flex-1">{label}</span>
                 {active && <ChevronRight size={11} className="text-violet-500/50" />}
               </Link>
@@ -113,11 +113,11 @@ export default function Nav() {
               style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)' }}>A</div>
             <div className="min-w-0">
               <p className="text-xs font-semibold text-gray-300 truncate">Admin</p>
-              <p className="text-[10px] text-gray-600">Super User</p>
+              <p className="text-[10px] text-gray-500">Super User</p>
             </div>
           </div>
           <button onClick={logout}
-            className="w-full flex items-center gap-3 rounded-xl px-3 py-2 text-xs text-gray-600 hover:text-red-400 transition-all duration-200 hover:bg-red-500/5">
+            className="w-full flex items-center gap-3 rounded-xl px-3 py-2 text-xs text-gray-400 hover:text-red-400 transition-all duration-200 hover:bg-red-500/5">
             <LogOut size={13} /> Sign out
           </button>
         </div>
