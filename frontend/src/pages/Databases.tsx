@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Database as DbIcon, Plus, Trash2, Copy, Check, Activity,
   HardDrive, Users, Zap, AlertTriangle, Clock, ArrowDown, ArrowUp,
-  BarChart3, RefreshCw, Server, Download, Upload,
+  BarChart3, RefreshCw, Server, Download, Upload, ExternalLink,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import Modal from '@/components/Modal';
@@ -556,7 +557,10 @@ export default function DatabasesPage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <p className="font-semibold text-white text-sm">{db.name}</p>
+                        <Link to={`/databases/${db.name}`}
+                          className="font-semibold text-white text-sm hover:text-amber-400 transition-colors flex items-center gap-1.5">
+                          {db.name} <ExternalLink size={11} className="text-gray-600 group-hover:text-amber-400/60" />
+                        </Link>
                         <span className="badge-yellow">PostgreSQL</span>
                         {dbStat && (
                           <span className="text-[10px] text-gray-600 font-mono">{bytes(dbStat.size)}</span>

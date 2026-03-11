@@ -273,3 +273,27 @@ func (db *DB) CountApps() int {
 func (db *DB) Close() {
 	db.Pool.Close()
 }
+
+// ConnectDB creates a short-lived connection pool to a specific database.
+// Caller must defer Close() on the returned *DB.
+func ConnectDB(ctx context.Context, connStr string) (*DB, error) {
+	config, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse connection string: %w", err)
+	}
+	config.MaxConns = 3
+	config.MinConns = 1
+	config.MaxConnIdleTime = 10 * time.Second
+	config.MaxConnLifetime = 30 * time.Second
+	config.ConnConfig.RuntimeParams["statement_timeout"] = "15000"
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("connect to database: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+	return &DB{Pool: pool}, nil
+}

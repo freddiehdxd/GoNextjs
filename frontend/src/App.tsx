@@ -9,6 +9,7 @@ import AppDetail from '@/pages/AppDetail';
 import Domains from '@/pages/Domains';
 import SSL from '@/pages/SSL';
 import Databases from '@/pages/Databases';
+import DatabaseDetail from '@/pages/DatabaseDetail';
 import Redis from '@/pages/Redis';
 import Files from '@/pages/Files';
 import Logs from '@/pages/Logs';
@@ -111,6 +112,7 @@ export default function App() {
         <Route path="/domains" element={<ProtectedRoute><Domains /></ProtectedRoute>} />
         <Route path="/ssl" element={<ProtectedRoute><SSL /></ProtectedRoute>} />
         <Route path="/databases" element={<ProtectedRoute><Databases /></ProtectedRoute>} />
+        <Route path="/databases/:name" element={<ProtectedRoute><DatabaseDetail /></ProtectedRoute>} />
         <Route path="/redis" element={<ProtectedRoute><Redis /></ProtectedRoute>} />
         <Route path="/services" element={<ProtectedRoute><Services /></ProtectedRoute>} />
         <Route path="/files" element={<ProtectedRoute><Files /></ProtectedRoute>} />

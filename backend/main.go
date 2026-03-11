@@ -146,6 +146,7 @@ func main() {
 			r.Post("/databases", dbHandler.Create)
 			r.Delete("/databases/{name}", dbHandler.Delete)
 			r.Get("/databases/stats", dbHandler.Stats)
+			r.Get("/databases/{name}/detail", dbHandler.Detail)
 			r.Post("/databases/{name}/restore", dbHandler.Restore)
 
 			// Redis
