@@ -114,10 +114,20 @@ systemctl start nginx
 rm -f /etc/nginx/sites-enabled/default
 ok "NGINX $(nginx -v 2>&1 | grep -oP '[\d.]+')"
 
-# ── 7. PostgreSQL ────────────────────────────────────────────────────────
-step 7 "Installing PostgreSQL"
-if ! command -v psql &>/dev/null; then
-  apt-get install -y -qq postgresql postgresql-contrib > /dev/null
+# ── 7. PostgreSQL 17 ──────────────────────────────────────────────────────
+step 7 "Installing PostgreSQL 17"
+PG_VERSION="17"
+if ! command -v psql &>/dev/null || ! psql --version 2>/dev/null | grep -q "17"; then
+  # Add official PostgreSQL APT repository for PG17
+  if [ ! -f /etc/apt/sources.list.d/pgdg.list ]; then
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
+    CODENAME=$(lsb_release -cs 2>/dev/null || echo "noble")
+    echo "deb [signed-by=/etc/apt/trusted.gpg.d/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list
+    apt-get update -qq
+  fi
+  apt-get install -y -qq postgresql-${PG_VERSION} postgresql-client-${PG_VERSION} postgresql-contrib > /dev/null
 fi
 systemctl enable postgresql > /dev/null 2>&1
 systemctl start postgresql
