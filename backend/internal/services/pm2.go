@@ -160,7 +160,7 @@ func (p *PM2) List() ([]models.Pm2Process, error) {
 // Action performs a PM2 action (start, stop, restart, delete) on an app
 func (p *PM2) Action(action, appName string) (*models.ExecResult, error) {
 	validActions := map[string]bool{
-		"start": true, "stop": true, "restart": true, "delete": true,
+		"start": true, "stop": true, "restart": true, "reload": true, "delete": true,
 	}
 	if !validActions[action] {
 		return nil, fmt.Errorf("invalid pm2 action: %s", action)

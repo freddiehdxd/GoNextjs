@@ -8,6 +8,7 @@ set -euo pipefail
 
 APP_NAME="${1:?app_name is required}"
 PORT="${2:?port is required}"
+PM2_MODE="${3:-restart}"   # "restart" (default) or "reload" (zero-downtime)
 APPS_DIR="${APPS_DIR:-/var/www/apps}"
 
 # ── Validation ─────────────────────────────────────────────────────────────
@@ -187,10 +188,15 @@ ${ENV_BLOCK}
 };
 EOF
 
-# ── Start or reload with PM2 ──────────────────────────────────────────────
+# ── Start or reload/restart with PM2 ───────────────────────────────────────
 if pm2 describe "${APP_NAME}" &>/dev/null; then
-  echo "[setup] Reloading existing PM2 process..."
-  pm2 reload "${APP_NAME}" --update-env 2>&1
+  if [ "$PM2_MODE" = "reload" ]; then
+    echo "[setup] Zero-downtime reload of PM2 process..."
+    pm2 reload "${APP_NAME}" --update-env 2>&1
+  else
+    echo "[setup] Restarting PM2 process..."
+    pm2 restart "${APP_NAME}" --update-env 2>&1
+  fi
 else
   echo "[setup] Starting new PM2 process..."
   pm2 start "${APP_DIR}/ecosystem.config.js" 2>&1

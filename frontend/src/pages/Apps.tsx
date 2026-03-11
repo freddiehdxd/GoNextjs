@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Plus, RotateCcw, ExternalLink, ChevronDown, ChevronUp,
   Github, Globe, Upload, Play, Square, Trash2, Zap,
-  GitBranch, Server, MoreHorizontal, FolderArchive, Check, Rocket,
+  GitBranch, Server, MoreHorizontal, FolderArchive, Check, Rocket, RefreshCw,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import Modal from '@/components/Modal';
@@ -215,14 +215,26 @@ export default function AppsPage() {
                     {app.status === 'online' ? <Square size={14} /> : <Play size={14} />}
                   </button>
                   {app.repo_url ? (
+                    <>
                     <button
                       onClick={() => doAction(app.name, 'rebuild')}
                       disabled={!!acting}
-                      title="Rebuild"
+                      title="Rebuild (restart)"
                       className="p-2 rounded-xl text-gray-600 hover:text-blue-400 hover:bg-blue-500/10 transition-all"
                     >
                       <Zap size={14} />
                     </button>
+                    <button
+                      onClick={() => doAction(app.name, 'rebuild-reload')}
+                      disabled={!!acting}
+                      title="Rebuild (zero-downtime reload)"
+                      className="p-2 rounded-xl text-gray-600 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all"
+                    >
+                      {acting === app.name + 'rebuild-reload'
+                        ? <span className="h-3.5 w-3.5 rounded-full border-2 border-emerald-400/30 border-t-emerald-400 animate-spin block" />
+                        : <RefreshCw size={14} />}
+                    </button>
+                    </>
                   ) : (
                     <>
                       <label
@@ -246,12 +258,22 @@ export default function AppsPage() {
                       <button
                         onClick={() => doAction(app.name, 'setup')}
                         disabled={!!acting}
-                        title="Deploy — install, build & start"
+                        title="Deploy — install, build & restart"
                         className="p-2 rounded-xl text-gray-600 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all"
                       >
                         {acting === app.name + 'setup'
                           ? <span className="h-3.5 w-3.5 rounded-full border-2 border-emerald-400/30 border-t-emerald-400 animate-spin block" />
                           : <Rocket size={14} />}
+                      </button>
+                      <button
+                        onClick={() => doAction(app.name, 'setup-reload')}
+                        disabled={!!acting}
+                        title="Deploy — install, build & reload (zero-downtime)"
+                        className="p-2 rounded-xl text-gray-600 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all"
+                      >
+                        {acting === app.name + 'setup-reload'
+                          ? <span className="h-3.5 w-3.5 rounded-full border-2 border-cyan-400/30 border-t-cyan-400 animate-spin block" />
+                          : <RefreshCw size={14} />}
                       </button>
                     </>
                   )}

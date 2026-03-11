@@ -269,7 +269,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch body.Action {
-	case "start", "stop", "restart":
+	case "start", "stop", "restart", "reload":
 		result, err := h.pm2.Action(body.Action, app.Name)
 		if err != nil {
 			log.Printf("PM2 %s failed for %s: %v", body.Action, app.Name, err)
@@ -343,6 +343,46 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		Success(w, map[string]string{"message": "App deployed and running on port " + fmt.Sprintf("%d", app.Port)})
+
+	case "setup-reload":
+		// Write .env before setup so the script picks up current env vars
+		h.writeEnvFile(app.Name, app.EnvVars)
+
+		// Zero-downtime deploy: install, build, then PM2 reload (keeps old process serving until new one is ready)
+		result, err := h.exec.RunScript("setup_app.sh",
+			app.Name, fmt.Sprintf("%d", app.Port), "reload")
+		if err != nil {
+			log.Printf("Setup-reload failed for %s: %v", app.Name, err)
+			Error(w, http.StatusInternalServerError, "Zero-downtime deploy failed")
+			return
+		}
+		if result.Code != 0 {
+			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
+			return
+		}
+		Success(w, map[string]string{"message": "Zero-downtime deploy complete on port " + fmt.Sprintf("%d", app.Port)})
+
+	case "rebuild-reload":
+		if app.RepoURL == "" {
+			Error(w, http.StatusBadRequest, "Cannot rebuild -- app has no git repository")
+			return
+		}
+
+		// Write .env before rebuild so the script picks up current env vars
+		h.writeEnvFile(app.Name, app.EnvVars)
+
+		// Zero-downtime rebuild: pull, install, build, then PM2 reload
+		result, err := h.exec.RunScript("deploy_next_app.sh",
+			app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "reload")
+		if err != nil {
+			Error(w, http.StatusInternalServerError, "Zero-downtime rebuild failed")
+			return
+		}
+		if result.Code != 0 {
+			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
+			return
+		}
+		Success(w, map[string]string{"message": "Zero-downtime rebuild complete"})
 
 	default:
 		Error(w, http.StatusBadRequest, "Invalid action")
