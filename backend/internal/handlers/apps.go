@@ -27,16 +27,17 @@ var (
 
 // AppsHandler handles application routes
 type AppsHandler struct {
-	db   *services.DB
-	pm2  *services.PM2
-	exec *services.Executor
-	port *services.PortAllocator
-	cfg  *config.Config
+	db    *services.DB
+	pm2   *services.PM2
+	exec  *services.Executor
+	port  *services.PortAllocator
+	nginx *services.Nginx
+	cfg   *config.Config
 }
 
 // NewAppsHandler creates a new apps handler
-func NewAppsHandler(db *services.DB, pm2 *services.PM2, exec *services.Executor, port *services.PortAllocator, cfg *config.Config) *AppsHandler {
-	return &AppsHandler{db: db, pm2: pm2, exec: exec, port: port, cfg: cfg}
+func NewAppsHandler(db *services.DB, pm2 *services.PM2, exec *services.Executor, port *services.PortAllocator, nginx *services.Nginx, cfg *config.Config) *AppsHandler {
+	return &AppsHandler{db: db, pm2: pm2, exec: exec, port: port, nginx: nginx, cfg: cfg}
 }
 
 // List handles GET /api/apps
@@ -45,7 +46,7 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	rows, err := h.db.Query(ctx,
-		"SELECT id, name, repo_url, branch, port, domain, ssl_enabled, env_vars, created_at, updated_at FROM apps ORDER BY created_at DESC")
+		"SELECT id, name, repo_url, branch, port, env_vars, created_at, updated_at FROM apps ORDER BY created_at DESC")
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to fetch apps")
 		return
@@ -57,14 +58,34 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 		var app models.App
 		var envJSON []byte
 		if err := rows.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-			&app.Domain, &app.SSLEnabled, &envJSON, &app.CreatedAt, &app.UpdatedAt); err != nil {
+			&envJSON, &app.CreatedAt, &app.UpdatedAt); err != nil {
 			Error(w, http.StatusInternalServerError, "Failed to scan app")
 			return
 		}
 		if err := json.Unmarshal(envJSON, &app.EnvVars); err != nil {
 			app.EnvVars = make(map[string]string)
 		}
+		app.Domains = make([]models.Domain, 0)
 		apps = append(apps, app)
+	}
+
+	// Load all domains and attach to apps
+	domainRows, err := h.db.Query(ctx,
+		"SELECT id, app_id, domain, ssl_enabled, created_at FROM domains ORDER BY created_at")
+	if err == nil {
+		defer domainRows.Close()
+		domainMap := make(map[string][]models.Domain)
+		for domainRows.Next() {
+			var d models.Domain
+			if err := domainRows.Scan(&d.ID, &d.AppID, &d.Domain, &d.SSLEnabled, &d.CreatedAt); err == nil {
+				domainMap[d.AppID] = append(domainMap[d.AppID], d)
+			}
+		}
+		for i := range apps {
+			if domains, ok := domainMap[apps[i].ID]; ok {
+				apps[i].Domains = domains
+			}
+		}
 	}
 
 	// Enrich with PM2 status
@@ -211,17 +232,18 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var app models.App
 	var envBytes []byte
 	err = h.db.QueryRow(ctx,
-		`INSERT INTO apps (name, repo_url, branch, port, env_vars) 
-		 VALUES ($1, $2, $3, $4, $5) 
-		 RETURNING id, name, repo_url, branch, port, domain, ssl_enabled, env_vars, created_at, updated_at`,
+		`INSERT INTO apps (name, repo_url, branch, port, env_vars)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING id, name, repo_url, branch, port, env_vars, created_at, updated_at`,
 		body.Name, body.RepoURL, body.Branch, port, envJSON,
 	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&app.Domain, &app.SSLEnabled, &envBytes, &app.CreatedAt, &app.UpdatedAt)
+		&envBytes, &app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to save app")
 		return
 	}
 	json.Unmarshal(envBytes, &app.EnvVars)
+	app.Domains = make([]models.Domain, 0)
 
 	SuccessCreated(w, app)
 }
@@ -260,7 +282,15 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 		// Delete from PM2 (best effort)
 		h.pm2.Action("delete", app.Name)
 
-		// Delete from DB
+		// Remove NGINX configs for all domains before DB delete
+		for _, d := range app.Domains {
+			h.nginx.RemoveConfig(d.Domain)
+		}
+		if len(app.Domains) > 0 {
+			h.nginx.TestAndReload() // best effort reload
+		}
+
+		// Delete from DB (CASCADE removes domain rows)
 		_, err := h.db.Exec(ctx, "DELETE FROM apps WHERE name = $1", app.Name)
 		if err != nil {
 			Error(w, http.StatusInternalServerError, "Failed to delete app")
@@ -344,16 +374,17 @@ func (h *AppsHandler) UpdateEnv(w http.ResponseWriter, r *http.Request) {
 	var app models.App
 	var envBytes []byte
 	err = h.db.QueryRow(ctx,
-		`UPDATE apps SET env_vars = $1, updated_at = NOW() WHERE name = $2 
-		 RETURNING id, name, repo_url, branch, port, domain, ssl_enabled, env_vars, created_at, updated_at`,
+		`UPDATE apps SET env_vars = $1, updated_at = NOW() WHERE name = $2
+		 RETURNING id, name, repo_url, branch, port, env_vars, created_at, updated_at`,
 		envJSON, name,
 	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&app.Domain, &app.SSLEnabled, &envBytes, &app.CreatedAt, &app.UpdatedAt)
+		&envBytes, &app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update env vars")
 		return
 	}
 	json.Unmarshal(envBytes, &app.EnvVars)
+	app.Domains = make([]models.Domain, 0)
 
 	// Write .env file to app directory
 	if err := h.writeEnvFile(name, body.EnvVars); err != nil {
@@ -372,16 +403,31 @@ func (h *AppsHandler) getAppByName(ctx context.Context, name string) (*models.Ap
 	var app models.App
 	var envJSON []byte
 	err := h.db.QueryRow(ctx,
-		"SELECT id, name, repo_url, branch, port, domain, ssl_enabled, env_vars, created_at, updated_at FROM apps WHERE name = $1",
+		"SELECT id, name, repo_url, branch, port, env_vars, created_at, updated_at FROM apps WHERE name = $1",
 		name,
 	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&app.Domain, &app.SSLEnabled, &envJSON, &app.CreatedAt, &app.UpdatedAt)
+		&envJSON, &app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(envJSON, &app.EnvVars); err != nil {
 		app.EnvVars = make(map[string]string)
 	}
+
+	// Load domains
+	app.Domains = make([]models.Domain, 0)
+	domainRows, err := h.db.Query(ctx,
+		"SELECT id, app_id, domain, ssl_enabled, created_at FROM domains WHERE app_id = $1 ORDER BY created_at", app.ID)
+	if err == nil {
+		defer domainRows.Close()
+		for domainRows.Next() {
+			var d models.Domain
+			if err := domainRows.Scan(&d.ID, &d.AppID, &d.Domain, &d.SSLEnabled, &d.CreatedAt); err == nil {
+				app.Domains = append(app.Domains, d)
+			}
+		}
+	}
+
 	return &app, nil
 }
 

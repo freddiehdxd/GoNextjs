@@ -644,12 +644,13 @@ export default function DashboardPage() {
                   </td>
                   <td className="td"><StatusBadge status={app.status} /></td>
                   <td className="td">
-                    {app.domain
-                      ? <a href={`http${app.ssl_enabled ? 's' : ''}://${app.domain}`}
+                    {app.domains?.length > 0
+                      ? <a href={`http${app.domains[0].ssl_enabled ? 's' : ''}://${app.domains[0].domain}`}
                           target="_blank" rel="noreferrer"
                           className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 text-xs transition-colors group">
                           <Globe size={11} className="shrink-0" />
-                          <span className="truncate max-w-[120px]">{app.domain}</span>
+                          <span className="truncate max-w-[120px]">{app.domains[0].domain}</span>
+                          {app.domains.length > 1 && <span className="text-gray-500">+{app.domains.length - 1}</span>}
                           <ArrowUpRight size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
                         </a>
                       : <span className="text-gray-700 text-xs">No domain</span>}

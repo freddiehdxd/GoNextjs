@@ -49,9 +49,13 @@ export const api = {
   delete: <T>(path: string)                 => req<T>('DELETE', path),
 };
 
+export interface Domain {
+  id: string; app_id: string; domain: string;
+  ssl_enabled: boolean; created_at: string;
+}
 export interface App {
   id: string; name: string; repo_url: string; branch: string;
-  port: number; domain: string | null; ssl_enabled: boolean;
+  port: number; domains: Domain[];
   status: string; cpu: number; memory: number;
   env_vars: Record<string, string>; created_at: string;
 }

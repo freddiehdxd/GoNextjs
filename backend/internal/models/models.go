@@ -2,18 +2,26 @@ package models
 
 import "time"
 
+// Domain represents a domain assigned to an app
+type Domain struct {
+	ID         string    `json:"id"`
+	AppID      string    `json:"app_id"`
+	Domain     string    `json:"domain"`
+	SSLEnabled bool      `json:"ssl_enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 // App represents a deployed application
 type App struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	RepoURL    string            `json:"repo_url"`
-	Branch     string            `json:"branch"`
-	Port       int               `json:"port"`
-	Domain     *string           `json:"domain"`
-	SSLEnabled bool              `json:"ssl_enabled"`
-	EnvVars    map[string]string `json:"env_vars"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
+	ID      string            `json:"id"`
+	Name    string            `json:"name"`
+	RepoURL string            `json:"repo_url"`
+	Branch  string            `json:"branch"`
+	Port    int               `json:"port"`
+	Domains []Domain          `json:"domains"`
+	EnvVars map[string]string `json:"env_vars"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 	// Enriched fields from PM2 (not stored in DB)
 	Status string  `json:"status,omitempty"`
 	CPU    float64 `json:"cpu,omitempty"`

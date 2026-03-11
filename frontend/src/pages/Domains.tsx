@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback } from 'react';
 import { Globe, Plus, Trash2, ExternalLink, ShieldCheck, Shield } from 'lucide-react';
 import Shell from '@/components/Shell';
 import Modal from '@/components/Modal';
-import { api, App } from '@/lib/api';
+import { api, App, Domain } from '@/lib/api';
+
+type DomainEntry = Domain & { appName: string; port: number };
 
 export default function DomainsPage() {
   const [apps,    setApps]    = useState<App[]>([]);
@@ -34,7 +36,9 @@ export default function DomainsPage() {
     await fetchApps();
   }
 
-  const withDomains = apps.filter((a) => a.domain);
+  const allDomains: DomainEntry[] = apps.flatMap(app =>
+    app.domains.map(d => ({ ...d, appName: app.name, port: app.port }))
+  );
 
   return (
     <Shell>
@@ -42,7 +46,7 @@ export default function DomainsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Domains</h1>
           <p className="text-sm text-gray-600 mt-1">
-            {loading ? 'Loading...' : `${withDomains.length} domain${withDomains.length !== 1 ? 's' : ''} configured`}
+            {loading ? 'Loading...' : `${allDomains.length} domain${allDomains.length !== 1 ? 's' : ''} configured`}
           </p>
         </div>
         <button onClick={() => setShowAdd(true)} className="btn-primary">
@@ -56,7 +60,7 @@ export default function DomainsPage() {
             <div key={i} className="card h-20 shimmer" style={{ background: 'rgba(255,255,255,0.02)' }} />
           ))}
         </div>
-      ) : withDomains.length === 0 ? (
+      ) : allDomains.length === 0 ? (
         <div className="card flex flex-col items-center justify-center py-24 text-center"
           style={{ background: 'rgba(255,255,255,0.01)' }}>
           <div className="h-16 w-16 rounded-2xl flex items-center justify-center mb-5"
@@ -71,8 +75,8 @@ export default function DomainsPage() {
         </div>
       ) : (
         <div className="space-y-3 animate-slide-up">
-          {withDomains.map((app) => (
-            <div key={app.id} className="card hover:border-white/[0.1] transition-all duration-200 group"
+          {allDomains.map((d) => (
+            <div key={d.id} className="card hover:border-white/[0.1] transition-all duration-200 group"
               style={{ background: 'rgba(255,255,255,0.02)' }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4 min-w-0">
@@ -85,14 +89,14 @@ export default function DomainsPage() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <a
-                        href={`http${app.ssl_enabled ? 's' : ''}://${app.domain}`}
+                        href={`http${d.ssl_enabled ? 's' : ''}://${d.domain}`}
                         target="_blank" rel="noreferrer"
                         className="flex items-center gap-1.5 font-semibold text-white hover:text-cyan-300 transition-colors text-sm"
                       >
-                        {app.domain}
+                        {d.domain}
                         <ExternalLink size={11} className="opacity-0 group-hover:opacity-100 transition-opacity" />
                       </a>
-                      {app.ssl_enabled ? (
+                      {d.ssl_enabled ? (
                         <span className="badge-green">
                           <ShieldCheck size={10} /> SSL
                         </span>
@@ -103,13 +107,13 @@ export default function DomainsPage() {
                       )}
                     </div>
                     <p className="text-xs text-gray-600 mt-0.5">
-                      Proxied to <span className="text-gray-500 font-medium">{app.name}</span> on port <code className="font-mono">{app.port}</code>
+                      Proxied to <span className="text-gray-500 font-medium">{d.appName}</span> on port <code className="font-mono">{d.port}</code>
                     </p>
                   </div>
                 </div>
 
                 <button
-                  onClick={() => removeDomain(app.domain!)}
+                  onClick={() => removeDomain(d.domain)}
                   className="p-2 rounded-xl text-gray-700 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
                 >
                   <Trash2 size={15} />
