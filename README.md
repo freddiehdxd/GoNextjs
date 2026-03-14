@@ -4,6 +4,14 @@ A lightweight, production-safe server control panel for deploying and managing
 web applications on a single Ubuntu 22.04+ server. Built with a Go backend and
 a Vite + React frontend for minimal resource usage (~15 MB RAM for the API).
 
+## Screenshots
+
+![Dashboard](./dashboard.png)
+
+![Databases](./database.png)
+
+![Database Info](./db-info.png)
+
 ## Features
 
 | Feature              | Details                                                                                                      |
