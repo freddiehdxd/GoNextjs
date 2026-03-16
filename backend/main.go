@@ -148,6 +148,7 @@ func main() {
 			r.Get("/databases/stats", dbHandler.Stats)
 			r.Get("/databases/{name}/detail", dbHandler.Detail)
 			r.Post("/databases/{name}/restore", dbHandler.Restore)
+			r.Post("/databases/{name}/reset-password", dbHandler.ResetPassword)
 
 			// Redis
 			r.Get("/redis", redisHandler.Status)
