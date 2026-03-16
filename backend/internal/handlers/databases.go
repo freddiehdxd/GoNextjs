@@ -192,6 +192,65 @@ func (h *DatabasesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	Success(w, map[string]string{"message": "Database " + name + " deleted"})
 }
 
+// ResetPassword handles POST /api/databases/{name}/reset-password — generates a new password
+func (h *DatabasesHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if !services.ValidatePgIdentifier(name) {
+		Error(w, http.StatusBadRequest, "Invalid database name")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	// Look up the database
+	var dbUser string
+	err := h.db.QueryRow(ctx,
+		"SELECT db_user FROM managed_databases WHERE name = $1", name).Scan(&dbUser)
+	if err != nil {
+		Error(w, http.StatusNotFound, "Database not found")
+		return
+	}
+
+	// Generate new password
+	passwordBytes := make([]byte, 16)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to generate password")
+		return
+	}
+	password := hex.EncodeToString(passwordBytes)
+
+	// Update PostgreSQL user password
+	_, err = h.db.Exec(ctx,
+		fmt.Sprintf(`ALTER USER "%s" WITH PASSWORD '%s'`, dbUser, password))
+	if err != nil {
+		log.Printf("Failed to reset password for user %s: %v", dbUser, err)
+		Error(w, http.StatusInternalServerError, "Failed to reset password")
+		return
+	}
+
+	// Update stored password
+	_, err = h.db.Exec(ctx,
+		"UPDATE managed_databases SET password = $1 WHERE name = $2", password, name)
+	if err != nil {
+		log.Printf("Failed to update stored password for %s: %v", name, err)
+		Error(w, http.StatusInternalServerError, "Password changed in PostgreSQL but failed to update record")
+		return
+	}
+
+	connStr := fmt.Sprintf("postgresql://%s:%s@%s:5432/%s", dbUser, password, h.cfg.DBHost, name)
+
+	Success(w, map[string]string{
+		"connection_string": connStr,
+		"password":          password,
+		"db_user":           dbUser,
+		"host":              h.cfg.DBHost,
+		"port":              "5432",
+		"database":          name,
+	})
+}
+
 // Stats handles GET /api/databases/stats — PostgreSQL monitoring dashboard
 func (h *DatabasesHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Database as DbIcon, Plus, Trash2, Copy, Check, Activity,
   HardDrive, Users, Zap, AlertTriangle, Clock, ArrowDown, ArrowUp,
-  BarChart3, RefreshCw, Server, Download, Upload, ExternalLink,
+  BarChart3, RefreshCw, Server, Download, Upload, ExternalLink, KeyRound,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import Modal from '@/components/Modal';
@@ -229,6 +229,9 @@ export default function DatabasesPage() {
   const [saving, setSaving] = useState(false);
   const [newConn, setNewConn] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', user: '' });
+  const [expandedDb, setExpandedDb] = useState<string | null>(null);
+  const [resettingPw, setResettingPw] = useState<string | null>(null);
+  const [resetResult, setResetResult] = useState<{ dbId: string; connStr: string; password: string; user: string; host: string; port: string; database: string } | null>(null);
 
   const fetchDbs = useCallback(async () => {
     const res = await api.get<ManagedDb[]>('/databases');
@@ -270,6 +273,27 @@ export default function DatabasesPage() {
     await api.delete(`/databases/${name}`);
     await fetchDbs();
     await fetchStats();
+  }
+
+  async function resetPassword(dbId: string, name: string) {
+    if (!confirm(`Reset password for "${name}"? The old password will stop working immediately.`)) return;
+    setResettingPw(dbId);
+    setResetResult(null);
+    const res = await api.post<{ connection_string: string; password: string; db_user: string; host: string; port: string; database: string }>(`/databases/${name}/reset-password`);
+    setResettingPw(null);
+    if (res.success && res.data) {
+      setResetResult({
+        dbId,
+        connStr: res.data.connection_string,
+        password: res.data.password,
+        user: res.data.db_user,
+        host: res.data.host,
+        port: res.data.port,
+        database: res.data.database,
+      });
+    } else {
+      alert(res.error ?? 'Failed to reset password');
+    }
   }
 
   // Backup / Restore
@@ -574,11 +598,82 @@ export default function DatabasesPage() {
                           </span>
                         )}
                       </p>
-                      <div className="mt-3 flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2">
-                        <code className="text-xs text-gray-500 font-mono flex-1 truncate">
-                          postgresql://{db.db_user}:{'*'.repeat(12)}@localhost:5432/{db.name}
-                        </code>
-                        <CopyButton text={`postgresql://${db.db_user}:***@localhost:5432/${db.name}`} />
+                      <div className="mt-3">
+                        <button
+                          onClick={() => setExpandedDb(expandedDb === db.id ? null : db.id)}
+                          className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2 w-full text-left hover:border-white/[0.1] transition-all"
+                        >
+                          <code className="text-xs text-gray-500 font-mono flex-1 truncate">
+                            postgresql://{db.db_user}:{'*'.repeat(12)}@localhost:5432/{db.name}
+                          </code>
+                          <span className="text-[10px] text-gray-600 shrink-0">
+                            {expandedDb === db.id ? 'Hide' : 'Copy Details'}
+                          </span>
+                        </button>
+                        {expandedDb === db.id && (
+                          <div className="mt-2 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-3 animate-slide-up">
+                            {/* Show reset result with full credentials if available */}
+                            {resetResult?.dbId === db.id ? (
+                              <>
+                                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+                                  <p className="text-[10px] text-emerald-400 font-semibold mb-1">Password reset! Save these credentials now.</p>
+                                </div>
+                                {[
+                                  { label: 'Host', value: resetResult.host },
+                                  { label: 'Port', value: resetResult.port },
+                                  { label: 'Database', value: resetResult.database },
+                                  { label: 'Username', value: resetResult.user },
+                                  { label: 'Password', value: resetResult.password },
+                                  { label: 'Connection String', value: resetResult.connStr },
+                                ].map((item) => (
+                                  <div key={item.label} className="flex items-center gap-3">
+                                    <span className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold w-28 shrink-0">{item.label}</span>
+                                    <code className={`text-xs font-mono flex-1 truncate ${item.label === 'Password' ? 'text-emerald-400' : 'text-gray-400'}`}>{item.value}</code>
+                                    <CopyButton text={item.value} />
+                                  </div>
+                                ))}
+                                <button onClick={() => setResetResult(null)} className="text-[10px] text-gray-600 hover:text-gray-400 transition-colors">
+                                  Dismiss credentials
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                {[
+                                  { label: 'Host', value: 'localhost' },
+                                  { label: 'Port', value: '5432' },
+                                  { label: 'Database', value: db.name },
+                                  { label: 'Username', value: db.db_user },
+                                  { label: 'Connection String', value: `postgresql://${db.db_user}@localhost:5432/${db.name}` },
+                                ].map((item) => (
+                                  <div key={item.label} className="flex items-center gap-3">
+                                    <span className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold w-28 shrink-0">{item.label}</span>
+                                    <code className="text-xs text-gray-400 font-mono flex-1 truncate">{item.value}</code>
+                                    <CopyButton text={item.value} />
+                                  </div>
+                                ))}
+                                <div className="pt-1 border-t border-white/[0.04]">
+                                  <button
+                                    onClick={() => resetPassword(db.id, db.name)}
+                                    disabled={resettingPw === db.id}
+                                    className="flex items-center gap-1.5 text-[11px] text-amber-500/80 hover:text-amber-400 transition-colors disabled:opacity-50"
+                                  >
+                                    {resettingPw === db.id ? (
+                                      <>
+                                        <span className="h-3 w-3 rounded-full border-2 border-amber-500/30 border-t-amber-500 animate-spin" />
+                                        Resetting...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <KeyRound size={12} />
+                                        Forgot password? Reset it
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
