@@ -154,6 +154,7 @@ func main() {
 			r.Get("/redis", redisHandler.Status)
 			r.Post("/redis/install", redisHandler.Install)
 			r.Get("/redis/stats", redisHandler.Stats)
+			r.Post("/redis/flush/{db}", redisHandler.FlushDB)
 
 			// System Services
 			r.Get("/services", servicesHandler.List)

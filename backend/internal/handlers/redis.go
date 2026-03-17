@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"panel-backend/internal/models"
 	"panel-backend/internal/services"
 )
@@ -73,6 +75,24 @@ func (h *RedisHandler) Install(w http.ResponseWriter, r *http.Request) {
 	}
 
 	Success(w, map[string]string{"message": "Redis installed and started"})
+}
+
+// FlushDB handles POST /api/redis/flush/{db} — flush a specific Redis database
+func (h *RedisHandler) FlushDB(w http.ResponseWriter, r *http.Request) {
+	dbParam := chi.URLParam(r, "db")
+	dbNum, err := strconv.Atoi(dbParam)
+	if err != nil || dbNum < 0 || dbNum > 15 {
+		Error(w, http.StatusBadRequest, "Invalid database number (0-15)")
+		return
+	}
+
+	result, execErr := h.exec.RunBin("redis-cli", "-n", strconv.Itoa(dbNum), "FLUSHDB")
+	if execErr != nil || result.Code != 0 {
+		Error(w, http.StatusInternalServerError, "Failed to flush database")
+		return
+	}
+
+	Success(w, map[string]string{"message": fmt.Sprintf("db%d flushed", dbNum)})
 }
 
 // Stats handles GET /api/redis/stats — Redis monitoring dashboard

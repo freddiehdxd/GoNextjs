@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Cpu, Copy, Check, CheckCircle2, XCircle, Download, Zap,
   MemoryStick, Users, Activity, Clock, HardDrive, Key,
-  RefreshCw, Database, Shield,
+  RefreshCw, Database, Shield, Trash2,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import { api, RedisInfo } from '@/lib/api';
@@ -175,10 +175,19 @@ function HitRateGauge({ hits, misses, rate }: { hits: number; misses: number; ra
 
 /* ---- Active Databases ---- */
 
-function ActiveDatabases({ keyspaces }: { keyspaces: RedisKeyspace[] }) {
+function ActiveDatabases({ keyspaces, onFlush }: { keyspaces: RedisKeyspace[]; onFlush: (db: number) => Promise<void> }) {
   const ksMap = new Map(keyspaces.map(ks => [ks.db, ks]));
   const allDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
   const activeCount = keyspaces.length;
+  const [confirmDb, setConfirmDb] = useState<string | null>(null);
+  const [flushing, setFlushing] = useState<string | null>(null);
+
+  async function handleFlush(db: string) {
+    const num = parseInt(db.replace('db', ''), 10);
+    setFlushing(db);
+    setConfirmDb(null);
+    try { await onFlush(num); } finally { setFlushing(null); }
+  }
 
   return (
     <div className="card p-4" style={{ background: 'rgba(255,255,255,0.02)' }}>
@@ -198,21 +207,48 @@ function ActiveDatabases({ keyspaces }: { keyspaces: RedisKeyspace[] }) {
         {allDbs.map(db => {
           const ks = ksMap.get(db);
           const active = !!ks;
+          const isConfirm = confirmDb === db;
+          const isFlush = flushing === db;
           return (
-            <div key={db} className="rounded-xl px-3 py-2.5 transition-all"
+            <div key={db} className="rounded-xl px-3 py-2.5 transition-all relative group"
               style={{
                 background: active ? 'rgba(16,185,129,0.06)' : 'rgba(255,255,255,0.015)',
                 border: `1px solid ${active ? 'rgba(16,185,129,0.18)' : 'rgba(255,255,255,0.04)'}`,
               }}>
-              <div className="flex items-center gap-1.5 mb-1">
-                <div className="h-1.5 w-1.5 rounded-full shrink-0"
-                  style={{ background: active ? '#10b981' : 'rgba(255,255,255,0.1)',
-                           boxShadow: active ? '0 0 6px rgba(16,185,129,0.4)' : 'none' }} />
-                <span className={`text-[11px] font-mono font-bold ${active ? 'text-emerald-400' : 'text-gray-700'}`}>
-                  {db}
-                </span>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <div className="h-1.5 w-1.5 rounded-full shrink-0"
+                    style={{ background: active ? '#10b981' : 'rgba(255,255,255,0.1)',
+                             boxShadow: active ? '0 0 6px rgba(16,185,129,0.4)' : 'none' }} />
+                  <span className={`text-[11px] font-mono font-bold ${active ? 'text-emerald-400' : 'text-gray-700'}`}>
+                    {db}
+                  </span>
+                </div>
+                {active && !isConfirm && !isFlush && (
+                  <button onClick={() => setConfirmDb(db)} title={`Flush ${db}`}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-700 hover:text-red-400 transition-all">
+                    <Trash2 size={10} />
+                  </button>
+                )}
+                {isFlush && (
+                  <span className="h-2.5 w-2.5 rounded-full border border-gray-600 border-t-gray-300 animate-spin" />
+                )}
               </div>
-              {active ? (
+              {isConfirm ? (
+                <div className="space-y-1.5">
+                  <p className="text-[9px] text-red-400">Flush all keys?</p>
+                  <div className="flex gap-1">
+                    <button onClick={() => handleFlush(db)}
+                      className="flex-1 text-[9px] font-semibold py-1 rounded-md bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors">
+                      Flush
+                    </button>
+                    <button onClick={() => setConfirmDb(null)}
+                      className="flex-1 text-[9px] font-semibold py-1 rounded-md bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : active ? (
                 <div className="space-y-0.5">
                   <div className="flex items-center justify-between">
                     <span className="text-[9px] text-gray-600">keys</span>
@@ -277,6 +313,12 @@ export default function RedisPage() {
     setInstalling(false);
     if (res.success) { await fetchInfo(); await fetchStats(); }
     else setError(res.error ?? 'Installation failed');
+  }
+
+  async function flushDb(db: number) {
+    const res = await api.post(`/redis/flush/${db}`);
+    if (res.success) await fetchStats();
+    else setError(res.error ?? `Failed to flush db${db}`);
   }
 
   const rs = stats;
@@ -377,7 +419,7 @@ export default function RedisPage() {
               </div>
 
               {/* Active Databases */}
-              <ActiveDatabases keyspaces={rs.keyspaces} />
+              <ActiveDatabases keyspaces={rs.keyspaces} onFlush={flushDb} />
 
               {/* Persistence info */}
               <div className="card p-4" style={{ background: 'rgba(255,255,255,0.02)' }}>
