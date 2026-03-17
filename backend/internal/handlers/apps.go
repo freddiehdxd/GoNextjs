@@ -201,7 +201,20 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Deploy or create empty directory
+	// Ensure app directory exists and write .env BEFORE deploy so the build
+	// can access env vars (Next.js auto-loads .env during `next build`).
+	appDir := h.cfg.AppsDir + "/" + body.Name
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to create app directory")
+		return
+	}
+	if len(body.EnvVars) > 0 {
+		if err := h.writeEnvFile(body.Name, body.EnvVars); err != nil {
+			fmt.Printf("[warn] failed to write .env for %s: %v\n", body.Name, err)
+		}
+	}
+
+	// Deploy or leave as empty directory
 	if body.RepoURL != "" {
 		result, err := h.exec.RunScript("deploy_next_app.sh",
 			body.Name, body.RepoURL, body.Branch, fmt.Sprintf("%d", port), "restart", "512")
@@ -212,20 +225,6 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if result.Code != 0 {
 			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
 			return
-		}
-	} else {
-		appDir := h.cfg.AppsDir + "/" + body.Name
-		if err := os.MkdirAll(appDir, 0755); err != nil {
-			Error(w, http.StatusInternalServerError, "Failed to create app directory")
-			return
-		}
-	}
-
-	// Write .env file with user-defined env vars so deploy/setup scripts pick them up
-	if len(body.EnvVars) > 0 {
-		if err := h.writeEnvFile(body.Name, body.EnvVars); err != nil {
-			// Non-fatal — log but continue
-			fmt.Printf("[warn] failed to write .env for %s: %v\n", body.Name, err)
 		}
 	}
 
@@ -804,23 +803,48 @@ func (h *AppsHandler) writeEnvFile(appName string, envVars map[string]string) er
 	return os.WriteFile(envPath, []byte(content), 0600)
 }
 
-// sanitizeDeployError strips internal paths and limits error message length for client responses
+// sanitizeDeployError extracts a meaningful error message from deploy script stderr.
+// It walks backwards through the output looking for the first line that contains
+// a recognisable error keyword, falling back to the last non-trivial line.
 func sanitizeDeployError(stderr string) string {
 	if stderr == "" {
 		return "Deploy script failed"
 	}
-	// Only return the last line (most relevant error) and truncate
+
 	lines := strings.Split(strings.TrimSpace(stderr), "\n")
-	msg := lines[len(lines)-1]
-	// Strip common internal path prefixes
+
+	// Walk backwards and pick the first line that looks like a real error message.
+	errorKeywords := []string{"Error:", "error:", "ERR!", "failed", "Fatal", "FATAL", "Cannot", "Missing", "not found"}
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		for _, kw := range errorKeywords {
+			if strings.Contains(line, kw) {
+				return sanitizeLine(line)
+			}
+		}
+	}
+
+	// Fallback: walk backwards for the first line longer than 3 chars
+	// (skips stray braces, blank lines, etc.)
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if len(line) > 3 {
+			return sanitizeLine(line)
+		}
+	}
+
+	return "Deploy script failed"
+}
+
+func sanitizeLine(msg string) string {
 	for _, prefix := range []string{"/var/www/apps/", "/opt/panel/", "/home/", "/root/"} {
 		msg = strings.ReplaceAll(msg, prefix, "")
 	}
-	if len(msg) > 200 {
-		msg = msg[:200] + "..."
-	}
-	if msg == "" {
-		return "Deploy script failed"
+	if len(msg) > 300 {
+		msg = msg[:300] + "..."
 	}
 	return msg
 }

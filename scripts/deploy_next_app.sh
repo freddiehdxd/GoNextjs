@@ -45,8 +45,18 @@ if [ -d "${APP_DIR}/.git" ]; then
 else
   echo "[panel] Cloning repository..."
   mkdir -p "${APPS_DIR}"
+  # Preserve .env written by the panel before wiping for a fresh clone
+  ENV_BAK=""
+  if [ -f "${APP_DIR}/.env" ]; then
+    ENV_BAK="$(mktemp)"
+    cp "${APP_DIR}/.env" "${ENV_BAK}"
+  fi
   rm -rf "${APP_DIR}"
   git clone --branch "${BRANCH}" --depth 1 -- "${REPO_URL}" "${APP_DIR}"
+  if [ -n "${ENV_BAK}" ]; then
+    cp "${ENV_BAK}" "${APP_DIR}/.env"
+    rm -f "${ENV_BAK}"
+  fi
 fi
 
 cd "${APP_DIR}"
