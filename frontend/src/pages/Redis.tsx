@@ -173,33 +173,68 @@ function HitRateGauge({ hits, misses, rate }: { hits: number; misses: number; ra
   );
 }
 
-/* ---- Keyspace Table ---- */
+/* ---- Active Databases ---- */
 
-function KeyspaceTable({ keyspaces }: { keyspaces: RedisKeyspace[] }) {
-  if (keyspaces.length === 0) return null;
+function ActiveDatabases({ keyspaces }: { keyspaces: RedisKeyspace[] }) {
+  const ksMap = new Map(keyspaces.map(ks => [ks.db, ks]));
+  const allDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
+  const activeCount = keyspaces.length;
+
   return (
     <div className="card p-4" style={{ background: 'rgba(255,255,255,0.02)' }}>
-      <div className="flex items-center gap-2 mb-3">
-        <Database size={13} className="text-gray-600" />
-        <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-widest">Keyspaces</p>
-      </div>
-      <div className="space-y-1.5">
-        <div className="grid grid-cols-4 gap-2 text-[10px] text-gray-700 uppercase font-semibold tracking-wider px-2">
-          <span>Database</span>
-          <span className="text-right">Keys</span>
-          <span className="text-right">Expires</span>
-          <span className="text-right">Avg TTL</span>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Database size={13} className="text-gray-600" />
+          <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-widest">Databases</p>
         </div>
-        {keyspaces.map(ks => (
-          <div key={ks.db} className="grid grid-cols-4 gap-2 items-center rounded-lg px-2 py-2 hover:bg-white/[0.03] transition-colors">
-            <span className="text-xs text-gray-300 font-mono">{ks.db}</span>
-            <span className="text-xs font-mono text-white text-right">{fmtNum(ks.keys)}</span>
-            <span className="text-xs font-mono text-gray-400 text-right">{fmtNum(ks.expires)}</span>
-            <span className="text-xs font-mono text-gray-500 text-right">
-              {ks.avgTtl > 0 ? `${Math.round(ks.avgTtl / 1000)}s` : '--'}
-            </span>
-          </div>
-        ))}
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full"
+          style={{ background: activeCount > 0 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.05)',
+                   color: activeCount > 0 ? '#10b981' : '#666',
+                   border: `1px solid ${activeCount > 0 ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.06)'}` }}>
+          {activeCount} / 16 active
+        </span>
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        {allDbs.map(db => {
+          const ks = ksMap.get(db);
+          const active = !!ks;
+          return (
+            <div key={db} className="rounded-xl px-3 py-2.5 transition-all"
+              style={{
+                background: active ? 'rgba(16,185,129,0.06)' : 'rgba(255,255,255,0.015)',
+                border: `1px solid ${active ? 'rgba(16,185,129,0.18)' : 'rgba(255,255,255,0.04)'}`,
+              }}>
+              <div className="flex items-center gap-1.5 mb-1">
+                <div className="h-1.5 w-1.5 rounded-full shrink-0"
+                  style={{ background: active ? '#10b981' : 'rgba(255,255,255,0.1)',
+                           boxShadow: active ? '0 0 6px rgba(16,185,129,0.4)' : 'none' }} />
+                <span className={`text-[11px] font-mono font-bold ${active ? 'text-emerald-400' : 'text-gray-700'}`}>
+                  {db}
+                </span>
+              </div>
+              {active ? (
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-gray-600">keys</span>
+                    <span className="text-[11px] font-mono text-white font-semibold">{fmtNum(ks.keys)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-gray-600">expires</span>
+                    <span className="text-[10px] font-mono text-gray-400">{fmtNum(ks.expires)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-gray-600">ttl</span>
+                    <span className="text-[10px] font-mono text-gray-500">
+                      {ks.avgTtl > 0 ? `${Math.round(ks.avgTtl / 1000)}s` : '--'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[9px] text-gray-800 mt-0.5">empty</p>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -332,15 +367,17 @@ export default function RedisPage() {
                   color={rs.evictedKeys > 0 ? '#ef4444' : '#10b981'} />
               </div>
 
-              {/* Memory + Hit Rate + Keyspace */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              {/* Memory + Hit Rate */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 <MemoryGauge
                   used={rs.usedMemory} peak={rs.usedMemoryPeak}
                   human={rs.usedMemoryHuman} peakHuman={rs.usedMemoryPeakHuman}
                   fragRatio={rs.memFragRatio} />
                 <HitRateGauge hits={rs.keyspaceHits} misses={rs.keyspaceMisses} rate={rs.hitRate} />
-                <KeyspaceTable keyspaces={rs.keyspaces} />
               </div>
+
+              {/* Active Databases */}
+              <ActiveDatabases keyspaces={rs.keyspaces} />
 
               {/* Persistence info */}
               <div className="card p-4" style={{ background: 'rgba(255,255,255,0.02)' }}>
