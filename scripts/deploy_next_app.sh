@@ -39,9 +39,19 @@ echo "[panel] Deploying ${APP_NAME} from ${REPO_URL} (${BRANCH}) on port ${PORT}
 # ── Clone or pull ──────────────────────────────────────────────────────────
 if [ -d "${APP_DIR}/.git" ]; then
   echo "[panel] Pulling latest changes..."
+  # Preserve .env written by the panel before git reset wipes untracked files
+  ENV_BAK=""
+  if [ -f "${APP_DIR}/.env" ]; then
+    ENV_BAK="$(mktemp)"
+    cp "${APP_DIR}/.env" "${ENV_BAK}"
+  fi
   git -C "${APP_DIR}" fetch origin
   git -C "${APP_DIR}" checkout "${BRANCH}"
   git -C "${APP_DIR}" reset --hard "origin/${BRANCH}"
+  if [ -n "${ENV_BAK}" ]; then
+    cp "${ENV_BAK}" "${APP_DIR}/.env"
+    rm -f "${ENV_BAK}"
+  fi
 else
   echo "[panel] Cloning repository..."
   mkdir -p "${APPS_DIR}"
