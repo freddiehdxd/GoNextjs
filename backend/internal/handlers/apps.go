@@ -270,7 +270,54 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch body.Action {
-	case "start", "stop", "restart", "reload":
+	case "start":
+		// Check if the app is already registered with PM2
+		pm2List, listErr := h.pm2.List()
+		isRegistered := false
+		if listErr == nil {
+			for _, p := range pm2List {
+				if p.Name == app.Name {
+					isRegistered = true
+					break
+				}
+			}
+		}
+
+		if !isRegistered {
+			// App not in PM2 yet — run the appropriate setup script to build and register it
+			h.writeEnvFile(app.Name, app.EnvVars)
+			var result *models.ExecResult
+			var err error
+			if app.RepoURL != "" {
+				result, err = h.exec.RunScript("deploy_next_app.sh",
+					app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
+			} else {
+				result, err = h.exec.RunScript("setup_app.sh",
+					app.Name, fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
+			}
+			if err != nil {
+				log.Printf("Auto-setup on start failed for %s: %v", app.Name, err)
+				Error(w, http.StatusInternalServerError, "Failed to start app")
+				return
+			}
+			if result.Code != 0 {
+				Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
+				return
+			}
+			Success(w, map[string]string{"message": "App built and started"})
+			return
+		}
+
+		// Already registered in PM2 — just start it
+		result, err := h.pm2.Action("start", app.Name)
+		if err != nil {
+			log.Printf("PM2 start failed for %s: %v", app.Name, err)
+			Error(w, http.StatusInternalServerError, "Failed to start app")
+			return
+		}
+		Success(w, map[string]string{"message": result.Stdout})
+
+	case "stop", "restart", "reload":
 		result, err := h.pm2.Action(body.Action, app.Name)
 		if err != nil {
 			log.Printf("PM2 %s failed for %s: %v", body.Action, app.Name, err)
