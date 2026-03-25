@@ -68,3 +68,28 @@ export interface RedisInfo {
   installed: boolean; running: boolean;
   connection: { host: string; port: number; url: string; env_var: string } | null;
 }
+
+export interface CronJob {
+  id: string;
+  app_id: string | null;
+  name: string;
+  schedule: string;
+  command: string | null;
+  action: string | null;
+  enabled: boolean;
+  max_runtime: number;
+  last_run_at: string | null;
+  next_run_at: string;
+  created_at: string;
+}
+
+export interface CronRun {
+  id: number;
+  job_id: string;
+  started_at: string;
+  finished_at: string | null;
+  timeout_at: string | null;
+  status: 'running' | 'success' | 'error' | 'timeout' | 'missed';
+  exit_code: number | null;
+  output: string;
+}
