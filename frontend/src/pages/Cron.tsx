@@ -35,10 +35,8 @@ export default function Cron() {
   const [acting, setActing] = useState<string | null>(null);
 
   const fetchJobs = useCallback(async () => {
-    const res = await api.get<CronJob[]>('/cron/jobs');
-    if (res.success && res.data) {
-      setJobs(res.data.filter(j => j.app_id === null));
-    }
+    const res = await api.get<CronJob[]>('/cron/jobs?server=true');
+    if (res.success && res.data) setJobs(res.data);
     setLoading(false);
   }, []);
 
