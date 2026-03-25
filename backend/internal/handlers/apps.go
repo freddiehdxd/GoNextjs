@@ -209,7 +209,7 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.EnvVars) > 0 {
-		if err := h.writeEnvFile(body.Name, body.EnvVars); err != nil {
+		if err := services.WriteEnvFile(h.cfg.AppsDir, body.Name, body.EnvVars); err != nil {
 			fmt.Printf("[warn] failed to write .env for %s: %v\n", body.Name, err)
 		}
 	}
@@ -285,7 +285,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 
 		if !isRegistered {
 			// App not in PM2 yet — run the appropriate setup script to build and register it
-			h.writeEnvFile(app.Name, app.EnvVars)
+			services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
 			var result *models.ExecResult
 			var err error
 			if app.RepoURL != "" {
@@ -360,7 +360,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Write .env before rebuild so the script picks up current env vars
-		h.writeEnvFile(app.Name, app.EnvVars)
+		services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
 
 		result, err := h.exec.RunScript("deploy_next_app.sh",
 			app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
@@ -376,7 +376,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 
 	case "setup":
 		// Write .env before setup so the script picks up current env vars
-		h.writeEnvFile(app.Name, app.EnvVars)
+		services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
 
 		// Install dependencies, build, and start via PM2 (for manually uploaded apps)
 		result, err := h.exec.RunScript("setup_app.sh",
@@ -394,7 +394,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 
 	case "setup-reload":
 		// Write .env before setup so the script picks up current env vars
-		h.writeEnvFile(app.Name, app.EnvVars)
+		services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
 
 		// Zero-downtime deploy: install, build, then PM2 reload (keeps old process serving until new one is ready)
 		result, err := h.exec.RunScript("setup_app.sh",
@@ -417,7 +417,7 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Write .env before rebuild so the script picks up current env vars
-		h.writeEnvFile(app.Name, app.EnvVars)
+		services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
 
 		// Zero-downtime rebuild: pull, install, build, then PM2 reload
 		result, err := h.exec.RunScript("deploy_next_app.sh",
@@ -475,7 +475,7 @@ func (h *AppsHandler) UpdateEnv(w http.ResponseWriter, r *http.Request) {
 	app.Domains = make([]models.Domain, 0)
 
 	// Write .env file to app directory
-	if err := h.writeEnvFile(name, body.EnvVars); err != nil {
+	if err := services.WriteEnvFile(h.cfg.AppsDir, name, body.EnvVars); err != nil {
 		fmt.Printf("[warn] failed to write .env for %s: %v\n", name, err)
 	}
 
@@ -817,37 +817,6 @@ func parseEnvFile(path string) (map[string]string, error) {
 	}
 
 	return vars, nil
-}
-
-// writeEnvFile writes environment variables to /var/www/apps/{name}/.env
-// This file is read by the deploy/setup scripts and injected into ecosystem.config.js
-func (h *AppsHandler) writeEnvFile(appName string, envVars map[string]string) error {
-	appDir := filepath.Join(h.cfg.AppsDir, appName)
-
-	// Ensure app directory exists
-	if err := os.MkdirAll(appDir, 0755); err != nil {
-		return fmt.Errorf("create app dir: %w", err)
-	}
-
-	envPath := filepath.Join(appDir, ".env")
-
-	if len(envVars) == 0 {
-		// Remove .env if no vars (don't leave empty file)
-		os.Remove(envPath)
-		return nil
-	}
-
-	var lines []string
-	for k, v := range envVars {
-		// Escape values containing special chars by quoting
-		if strings.ContainsAny(v, " \t\n\"'\\$#") {
-			v = `"` + strings.ReplaceAll(strings.ReplaceAll(v, `\`, `\\`), `"`, `\"`) + `"`
-		}
-		lines = append(lines, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	content := strings.Join(lines, "\n") + "\n"
-	return os.WriteFile(envPath, []byte(content), 0600)
 }
 
 // sanitizeDeployError extracts a meaningful error message from deploy script stderr.
