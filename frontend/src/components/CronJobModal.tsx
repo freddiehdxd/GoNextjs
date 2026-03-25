@@ -23,7 +23,7 @@ export default function CronJobModal({ job, appId, onClose, onSaved }: Props) {
   const [preset, setPreset] = useState('0 0 * * *');
   const [customSchedule, setCustomSchedule] = useState('');
   const [isCustom, setIsCustom] = useState(false);
-  const [type, setType] = useState<'command' | 'action'>(job?.command ? 'command' : 'action');
+  const [type, setType] = useState<'command' | 'action'>(job?.action ? 'action' : 'command');
   const [command, setCommand] = useState(job?.command ?? '');
   const [action, setAction] = useState(job?.action ?? 'restart');
   const [maxRuntime, setMaxRuntime] = useState(job?.max_runtime ?? 300);
@@ -128,14 +128,20 @@ export default function CronJobModal({ job, appId, onClose, onSaved }: Props) {
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1.5">Type</label>
             <div className="flex rounded-lg overflow-hidden border border-white/10">
-              {(['command', 'action'] as const).map(t => (
-                <button key={t}
-                  onClick={() => setType(t)}
+              <button
+                onClick={() => setType('command')}
+                className={`flex-1 py-2 text-xs font-medium transition-colors capitalize
+                  ${type === 'command' ? 'bg-violet-600 text-white' : 'bg-white/5 text-gray-400 hover:text-gray-200'}`}>
+                Shell Command
+              </button>
+              {appId !== null && (
+                <button
+                  onClick={() => setType('action')}
                   className={`flex-1 py-2 text-xs font-medium transition-colors capitalize
-                    ${type === t ? 'bg-violet-600 text-white' : 'bg-white/5 text-gray-400 hover:text-gray-200'}`}>
-                  {t === 'command' ? 'Shell Command' : 'App Action'}
+                    ${type === 'action' ? 'bg-violet-600 text-white' : 'bg-white/5 text-gray-400 hover:text-gray-200'}`}>
+                  App Action
                 </button>
-              ))}
+              )}
             </div>
           </div>
 

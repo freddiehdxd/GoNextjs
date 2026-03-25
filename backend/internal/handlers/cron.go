@@ -74,6 +74,9 @@ func (h *CronHandler) validateRequest(body cronJobRequest) string {
 	if body.Command != nil && *body.Command == "" {
 		return "command must not be empty"
 	}
+	if body.Action != nil && (body.AppID == nil || *body.AppID == "") {
+		return "action jobs require an app_id"
+	}
 	if body.Action != nil {
 		if *body.Action != "restart" && *body.Action != "deploy" {
 			return "action must be 'restart' or 'deploy'"
@@ -97,16 +100,23 @@ func (h *CronHandler) List(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	appID := r.URL.Query().Get("app_id")
+	serverOnly := r.URL.Query().Get("server") == "true"
 
-	query := `SELECT id, app_id, name, schedule, command, action, enabled, max_runtime,
-                     last_run_at, next_run_at, created_at
-              FROM cron_jobs ORDER BY created_at DESC`
-	args := []interface{}{}
-	if appID != "" {
+	var query string
+	var args []interface{}
+	if serverOnly {
+		query = `SELECT id, app_id, name, schedule, command, action, enabled, max_runtime,
+                        last_run_at, next_run_at, created_at
+                 FROM cron_jobs WHERE app_id IS NULL ORDER BY created_at DESC`
+	} else if appID != "" {
 		query = `SELECT id, app_id, name, schedule, command, action, enabled, max_runtime,
                         last_run_at, next_run_at, created_at
                  FROM cron_jobs WHERE app_id=$1 ORDER BY created_at DESC`
-		args = append(args, appID)
+		args = []interface{}{appID}
+	} else {
+		query = `SELECT id, app_id, name, schedule, command, action, enabled, max_runtime,
+                        last_run_at, next_run_at, created_at
+                 FROM cron_jobs ORDER BY created_at DESC`
 	}
 
 	rows, err := h.db.Query(ctx, query, args...)
@@ -259,11 +269,6 @@ func (h *CronHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 
 	if h.scheduler == nil {
 		Error(w, http.StatusInternalServerError, "no scheduler")
-		return
-	}
-
-	if h.scheduler.IsRunning(id) {
-		Error(w, http.StatusConflict, "job is already running")
 		return
 	}
 

@@ -293,6 +293,8 @@ func (s *CronScheduler) executeJob(ctx context.Context, job cronJob, runID int64
 		}
 	}
 
+	// Use context.Background() so the DB update succeeds even if the scheduler
+	// context has been cancelled during shutdown.
 	finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s.db.Exec(finishCtx,
@@ -412,6 +414,9 @@ func (s *CronScheduler) cleanupOrphans(ctx context.Context) {
 	s.db.Exec(ctx,
 		`UPDATE cron_runs SET status='timeout', finished_at=NOW()
          WHERE status='running' AND timeout_at IS NOT NULL AND timeout_at < NOW()`)
+	// This second UPDATE intentionally runs after the timeout UPDATE above.
+	// Rows updated to 'timeout' above no longer match status='running',
+	// so they are excluded here and get the correct 'timeout' status.
 	// Other running rows — panel restarted mid-run
 	s.db.Exec(ctx,
 		`UPDATE cron_runs SET status='error', finished_at=NOW(), output='panel restarted mid-run'

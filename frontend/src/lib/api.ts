@@ -79,7 +79,7 @@ export interface CronJob {
   enabled: boolean;
   max_runtime: number;
   last_run_at: string | null;
-  next_run_at: string | null;
+  next_run_at: string;
   created_at: string;
 }
 
