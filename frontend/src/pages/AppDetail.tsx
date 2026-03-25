@@ -5,12 +5,15 @@ import {
   GitBranch, Server, FolderArchive, Rocket, Plus, Check, Copy,
   Activity, ScrollText, Settings2, Upload, Clock, Cpu, MemoryStick,
   ChevronDown, Pause, Eye, EyeOff, Webhook, RefreshCw,
+  ToggleLeft, ToggleRight, Edit2, ChevronRight,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import StatusBadge from '@/components/StatusBadge';
-import { api, App } from '@/lib/api';
+import { api, App, CronJob, CronRun } from '@/lib/api';
+import Modal from '@/components/Modal';
+import CronJobModal from '@/components/CronJobModal';
 
-type Tab = 'overview' | 'logs' | 'configuration' | 'deployments';
+type Tab = 'overview' | 'logs' | 'configuration' | 'deployments' | 'cron';
 
 function bytes(b: number): string {
   if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
@@ -34,6 +37,13 @@ export default function AppDetail() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('overview');
   const [acting, setActing] = useState<string | null>(null);
+  const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
+  const [cronRuns, setCronRuns] = useState<Record<string, CronRun[]>>({});
+  const [expandedCronJob, setExpandedCronJob] = useState<string | null>(null);
+  const [showCronModal, setShowCronModal] = useState(false);
+  const [editingCronJob, setEditingCronJob] = useState<CronJob | null>(null);
+  const [cronOutputModal, setCronOutputModal] = useState<{ jobId: string; runId: number } | null>(null);
+  const [cronOutputText, setCronOutputText] = useState('');
 
   const fetchApp = useCallback(async () => {
     if (!name) return;
@@ -47,6 +57,28 @@ export default function AppDetail() {
   }, [name]);
 
   useEffect(() => { fetchApp(); }, [fetchApp]);
+
+  const fetchCronJobs = useCallback(async () => {
+    if (!app) return;
+    const res = await api.get<CronJob[]>(`/cron/jobs?app_id=${app.id}`);
+    if (res.success && res.data) setCronJobs(res.data);
+  }, [app]);
+
+  const fetchCronRuns = useCallback(async (jobId: string) => {
+    const res = await api.get<CronRun[]>(`/cron/jobs/${jobId}/runs`);
+    if (res.success && res.data) setCronRuns(prev => ({ ...prev, [jobId]: res.data! }));
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'cron' && app) fetchCronJobs();
+  }, [tab, app, fetchCronJobs]);
+
+  useEffect(() => {
+    if (!expandedCronJob) return;
+    fetchCronRuns(expandedCronJob);
+    const iv = setInterval(() => fetchCronRuns(expandedCronJob), 5000);
+    return () => clearInterval(iv);
+  }, [expandedCronJob, fetchCronRuns]);
 
   // Auto-refresh app data every 5s
   useEffect(() => {
@@ -89,6 +121,7 @@ export default function AppDetail() {
     { id: 'logs',           label: 'Logs',           icon: <ScrollText size={14} /> },
     { id: 'configuration',  label: 'Configuration',  icon: <Settings2 size={14} /> },
     { id: 'deployments',    label: 'Deployments',    icon: <Upload size={14} /> },
+    { id: 'cron',           label: 'Cron',           icon: <Clock size={14} /> },
   ];
 
   return (
@@ -171,7 +204,120 @@ export default function AppDetail() {
         {tab === 'logs' && <LogsTab appName={app.name} />}
         {tab === 'configuration' && <ConfigTab app={app} onSaved={fetchApp} />}
         {tab === 'deployments' && <DeploymentsTab app={app} onAction={doAction} acting={acting} onRefresh={fetchApp} />}
+
+        {tab === 'cron' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-300">Cron Jobs</h3>
+              <button
+                onClick={() => { setEditingCronJob(null); setShowCronModal(true); }}
+                className="flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs font-medium text-white transition-colors"
+              >
+                <Plus size={12} /> Add Job
+              </button>
+            </div>
+
+            {cronJobs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <Clock size={32} className="text-gray-700 mb-3" />
+                <p className="text-sm text-gray-500">No cron jobs for this app</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {cronJobs.map(job => (
+                  <div key={job.id} className="rounded-xl border border-white/[0.06] overflow-hidden"
+                    style={{ background: 'rgba(255,255,255,0.02)' }}>
+                    <div
+                      className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                      onClick={() => setExpandedCronJob(expandedCronJob === job.id ? null : job.id)}
+                    >
+                      <span className="text-gray-600">
+                        {expandedCronJob === job.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-200 truncate">{job.name}</p>
+                        <p className="text-xs font-mono text-gray-500 mt-0.5">{job.schedule}</p>
+                      </div>
+                      <span className="text-xs text-gray-500 hidden sm:block">
+                        Last: {job.last_run_at ? new Date(job.last_run_at).toLocaleString() : 'Never'}
+                      </span>
+                      <button onClick={async e => { e.stopPropagation(); await api.post(`/cron/jobs/${job.id}/toggle`); fetchCronJobs(); }}
+                        className="text-gray-500 hover:text-violet-400 transition-colors shrink-0">
+                        {job.enabled ? <ToggleRight size={17} className="text-emerald-400" /> : <ToggleLeft size={17} />}
+                      </button>
+                      <button onClick={e => { e.stopPropagation(); api.post(`/cron/jobs/${job.id}/run`); }}
+                        className="text-gray-500 hover:text-blue-400 transition-colors shrink-0" title="Run now">
+                        <Play size={13} />
+                      </button>
+                      <button onClick={e => { e.stopPropagation(); setEditingCronJob(job); setShowCronModal(true); }}
+                        className="text-gray-500 hover:text-gray-300 transition-colors shrink-0">
+                        <Edit2 size={13} />
+                      </button>
+                      <button onClick={e => {
+                        e.stopPropagation();
+                        if (confirm('Delete this cron job?')) api.delete(`/cron/jobs/${job.id}`).then(fetchCronJobs);
+                      }} className="text-gray-500 hover:text-red-400 transition-colors shrink-0">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+
+                    {expandedCronJob === job.id && (
+                      <div className="border-t border-white/[0.05] px-4 py-3">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Run History</p>
+                        {!cronRuns[job.id] || cronRuns[job.id].length === 0 ? (
+                          <p className="text-xs text-gray-600 py-2">No runs yet</p>
+                        ) : (
+                          <div className="space-y-1">
+                            {cronRuns[job.id].map(run => {
+                              const dur = run.finished_at
+                                ? ((new Date(run.finished_at).getTime() - new Date(run.started_at).getTime()) / 1000).toFixed(1) + 's'
+                                : '…';
+                              return (
+                                <div key={run.id}
+                                  className="flex items-center gap-3 py-1.5 px-2 rounded-lg hover:bg-white/[0.02] cursor-pointer transition-colors"
+                                  onClick={async () => {
+                                    setCronOutputModal({ jobId: job.id, runId: run.id });
+                                    const r = await api.get<{ output: string }>(`/cron/jobs/${job.id}/runs/${run.id}/output`);
+                                    setCronOutputText(r.data?.output ?? '');
+                                  }}
+                                >
+                                  <StatusBadge status={run.status} />
+                                  <span className="text-xs text-gray-500">{new Date(run.started_at).toLocaleString()}</span>
+                                  <span className="text-xs text-gray-600">{dur}</span>
+                                  <span className="text-xs text-gray-600 font-mono truncate flex-1">{run.output}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {showCronModal && app && (
+        <CronJobModal
+          job={editingCronJob}
+          appId={app.id}
+          onClose={() => setShowCronModal(false)}
+          onSaved={() => { setShowCronModal(false); fetchCronJobs(); }}
+        />
+      )}
+
+      {cronOutputModal && (
+        <Modal title="Run Output" onClose={() => setCronOutputModal(null)}>
+          <div className="p-4">
+            <pre className="text-xs text-gray-300 font-mono bg-black/40 rounded-lg p-4 overflow-auto max-h-96 whitespace-pre-wrap">
+              {cronOutputText || '(empty)'}
+            </pre>
+          </div>
+        </Modal>
+      )}
     </Shell>
   );
 }
