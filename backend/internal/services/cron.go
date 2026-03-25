@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -22,6 +23,9 @@ const (
 	cronPoolSkipLimit  = 3         // consecutive pool-full skips before "missed"
 	cronTickInterval   = 60 * time.Second
 )
+
+// ErrJobAlreadyRunning is returned by RunNow when the job has an active run.
+var ErrJobAlreadyRunning = errors.New("job is already running")
 
 // ParseSchedule parses a 5-field cron expression using robfig/cron/v3.
 // Returns the parsed schedule or an error if the expression is invalid.
@@ -119,7 +123,7 @@ func (s *CronScheduler) IsRunning(jobID string) bool {
 // triggered by the operator.
 func (s *CronScheduler) RunNow(ctx context.Context, jobID string) error {
 	if s.IsRunning(jobID) {
-		return fmt.Errorf("job is already running")
+		return ErrJobAlreadyRunning
 	}
 
 	job, err := s.fetchJob(ctx, jobID)
