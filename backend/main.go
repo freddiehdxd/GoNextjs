@@ -63,6 +63,12 @@ func main() {
 	alertsHandler := handlers.NewAlertsHandler(db, pm2)
 	backupHandler := handlers.NewBackupHandler(db, exec, cfg)
 
+	// Cron scheduler (starts background goroutine)
+	cronScheduler := services.NewCronScheduler(db, pm2, exec, cfg.AppsDir)
+	cronHandler := handlers.NewCronHandler(db, cronScheduler)
+	schedulerCtx, schedulerCancel := context.WithCancel(ctx)
+	cronScheduler.Start(schedulerCtx)
+
 	// Health checker with alert callback
 	healthChecker := handlers.NewHealthChecker(db, pm2, func(eventType, title, desc string) {
 		// Forward health alerts to the alerts handler's webhook
@@ -193,6 +199,17 @@ func main() {
 			r.Post("/backups/run", backupHandler.RunNow)
 			r.Get("/backups/history", backupHandler.History)
 
+			// Cron jobs
+			r.Get("/cron/jobs", cronHandler.List)
+			r.Post("/cron/jobs", cronHandler.Create)
+			r.Get("/cron/jobs/{id}", cronHandler.Get)
+			r.Put("/cron/jobs/{id}", cronHandler.Update)
+			r.Delete("/cron/jobs/{id}", cronHandler.Delete)
+			r.Post("/cron/jobs/{id}/toggle", cronHandler.Toggle)
+			r.Post("/cron/jobs/{id}/run", cronHandler.RunNow)
+			r.Get("/cron/jobs/{id}/runs", cronHandler.Runs)
+			r.Get("/cron/jobs/{id}/runs/{run_id}/output", cronHandler.RunOutput)
+
 			// Panel Update (check + log are normal JSON)
 			r.Get("/update/check", updateHandler.Check)
 			r.Get("/update/log", updateHandler.Log)
@@ -229,6 +246,9 @@ func main() {
 
 	<-done
 	log.Println("Shutting down...")
+
+	schedulerCancel()
+	cronScheduler.Stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
