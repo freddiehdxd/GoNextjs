@@ -74,11 +74,17 @@ export default function AppDetail() {
   }, [tab, app, fetchCronJobs]);
 
   useEffect(() => {
-    if (!expandedCronJob) return;
+    if (tab !== 'cron' || !app) return;
+    const iv = setInterval(fetchCronJobs, 30000);
+    return () => clearInterval(iv);
+  }, [tab, app, fetchCronJobs]);
+
+  useEffect(() => {
+    if (!expandedCronJob || tab !== 'cron') return;
     fetchCronRuns(expandedCronJob);
     const iv = setInterval(() => fetchCronRuns(expandedCronJob), 5000);
     return () => clearInterval(iv);
-  }, [expandedCronJob, fetchCronRuns]);
+  }, [expandedCronJob, tab, fetchCronRuns]);
 
   // Auto-refresh app data every 5s
   useEffect(() => {
@@ -245,7 +251,7 @@ export default function AppDetail() {
                         className="text-gray-500 hover:text-violet-400 transition-colors shrink-0">
                         {job.enabled ? <ToggleRight size={17} className="text-emerald-400" /> : <ToggleLeft size={17} />}
                       </button>
-                      <button onClick={e => { e.stopPropagation(); api.post(`/cron/jobs/${job.id}/run`); }}
+                      <button onClick={async e => { e.stopPropagation(); const r = await api.post(`/cron/jobs/${job.id}/run`); if (!r.success) alert(r.error ?? 'Failed to run job'); }}
                         className="text-gray-500 hover:text-blue-400 transition-colors shrink-0" title="Run now">
                         <Play size={13} />
                       </button>
@@ -277,6 +283,7 @@ export default function AppDetail() {
                                   className="flex items-center gap-3 py-1.5 px-2 rounded-lg hover:bg-white/[0.02] cursor-pointer transition-colors"
                                   onClick={async () => {
                                     setCronOutputModal({ jobId: job.id, runId: run.id });
+                                    setCronOutputText('');
                                     const r = await api.get<{ output: string }>(`/cron/jobs/${job.id}/runs/${run.id}/output`);
                                     setCronOutputText(r.data?.output ?? '');
                                   }}
