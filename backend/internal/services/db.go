@@ -167,6 +167,43 @@ var migrations = []struct {
 			INSERT INTO backup_settings (enabled) VALUES (false) ON CONFLICT DO NOTHING;
 		`,
 	},
+	{
+		version:     4,
+		description: "Add cron_jobs and cron_runs tables",
+		sql: `
+			CREATE TABLE IF NOT EXISTS cron_jobs (
+				id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				app_id      UUID REFERENCES apps(id) ON DELETE CASCADE,
+				name        TEXT NOT NULL,
+				schedule    TEXT NOT NULL,
+				command     TEXT,
+				action      TEXT,
+				enabled     BOOLEAN NOT NULL DEFAULT true,
+				max_runtime INTEGER NOT NULL DEFAULT 300,
+				last_run_at TIMESTAMPTZ,
+				next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				CHECK ((command IS NULL) != (action IS NULL)),
+				UNIQUE NULLS NOT DISTINCT (app_id, name)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_cron_jobs_app_id ON cron_jobs(app_id);
+			CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run ON cron_jobs(next_run_at) WHERE enabled = true;
+
+			CREATE TABLE IF NOT EXISTS cron_runs (
+				id          BIGSERIAL PRIMARY KEY,
+				job_id      UUID NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
+				started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				finished_at TIMESTAMPTZ,
+				timeout_at  TIMESTAMPTZ,
+				status      TEXT NOT NULL DEFAULT 'running',
+				exit_code   INTEGER,
+				output      TEXT NOT NULL DEFAULT ''
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id ON cron_runs(job_id);
+		`,
+	},
 }
 
 // InitSchema runs all pending migrations in order and performs cleanup.
