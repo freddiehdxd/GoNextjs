@@ -1,12 +1,59 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Folder, FileText, ChevronRight, Upload, Save, ArrowLeft, Home,
-  FolderOpen, Edit3,
+  FolderOpen, Edit3, ChevronDown,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import { api, App } from '@/lib/api';
 
 interface FsEntry { name: string; type: 'dir' | 'file'; path: string }
+
+function AppDropdown({ apps, value, onChange }: {
+  apps: App[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = apps.find(a => a.name === value);
+
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative w-44">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between rounded-lg border border-white/10 px-3 py-2 text-sm transition-colors focus:outline-none focus:border-violet-500/50"
+        style={{ background: 'rgba(255,255,255,0.05)', color: selected ? '#e5e7eb' : '#6b7280' }}>
+        <span className="truncate">{selected ? selected.name : 'Select app...'}</span>
+        <ChevronDown size={13} className={`text-gray-500 shrink-0 ml-1 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-lg overflow-hidden shadow-xl"
+          style={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)' }}>
+          <button type="button"
+            onClick={() => { onChange(''); setOpen(false); }}
+            className={`w-full text-left px-3 py-2 text-sm transition-colors ${!value ? 'bg-violet-600/30 text-violet-300' : 'text-gray-500 hover:bg-white/[0.06]'}`}>
+            Select app...
+          </button>
+          {apps.map(a => (
+            <button key={a.id} type="button"
+              onClick={() => { onChange(a.name); setOpen(false); }}
+              className={`w-full text-left px-3 py-2 text-sm transition-colors
+                ${a.name === value ? 'bg-violet-600/30 text-violet-300' : 'text-gray-300 hover:bg-white/[0.06]'}`}>
+              {a.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function FilesPage() {
   const [apps,        setApps]        = useState<App[]>([]);
@@ -114,14 +161,11 @@ export default function FilesPage() {
           {/* Toolbar */}
           <div className="flex items-center gap-3 flex-wrap">
             {/* App selector */}
-            <select
-              className="input w-44"
+            <AppDropdown
+              apps={apps}
               value={selectedApp}
-              onChange={(e) => { setSelectedApp(e.target.value); setPath(''); }}
-            >
-              <option value="">Select app...</option>
-              {apps.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
-            </select>
+              onChange={(v) => { setSelectedApp(v); setPath(''); }}
+            />
 
             {/* Breadcrumb */}
             {selectedApp && (
