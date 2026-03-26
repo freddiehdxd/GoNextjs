@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { X, ChevronDown } from 'lucide-react';
 import { api, CronJob } from '@/lib/api';
 
 const PRESETS = [
@@ -11,11 +11,60 @@ const PRESETS = [
   { label: 'Custom…',        value: '__custom__'  },
 ];
 
+const ACTIONS = [
+  { label: 'Restart app',              value: 'restart' },
+  { label: 'Deploy (git pull + rebuild)', value: 'deploy' },
+];
+
 interface Props {
   job: CronJob | null;
   appId: string | null;
   onClose: () => void;
   onSaved: () => void;
+}
+
+function Dropdown({ options, value, onChange }: {
+  options: { label: string; value: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find(o => o.value === value);
+
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between rounded-lg border border-white/10 px-3 py-2 text-sm text-gray-100 transition-colors focus:outline-none focus:border-violet-500/50"
+        style={{ background: 'rgba(255,255,255,0.05)' }}>
+        <span>{selected?.label ?? value}</span>
+        <ChevronDown size={13} className={`text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-lg overflow-hidden shadow-xl"
+          style={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)' }}>
+          {options.map(o => (
+            <button key={o.value} type="button"
+              onClick={() => { onChange(o.value); setOpen(false); }}
+              className={`w-full text-left px-3 py-2 text-sm transition-colors
+                ${o.value === value
+                  ? 'bg-violet-600/30 text-violet-300'
+                  : 'text-gray-300 hover:bg-white/[0.06]'}`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function CronJobModal({ job, appId, onClose, onSaved }: Props) {
@@ -102,21 +151,19 @@ export default function CronJobModal({ job, appId, onClose, onSaved }: Props) {
           {/* Schedule */}
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1.5">Schedule</label>
-            <select
+            <Dropdown
+              options={PRESETS}
               value={isCustom ? '__custom__' : preset}
-              onChange={e => {
-                if (e.target.value === '__custom__') {
+              onChange={v => {
+                if (v === '__custom__') {
                   setIsCustom(true);
                   setPreset('__custom__');
                 } else {
                   setIsCustom(false);
-                  setPreset(e.target.value);
+                  setPreset(v);
                 }
               }}
-              className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-violet-500/50"
-            >
-              {PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
+            />
             {isCustom && (
               <input value={customSchedule} onChange={e => setCustomSchedule(e.target.value)}
                 placeholder="*/5 * * * *"
@@ -130,14 +177,14 @@ export default function CronJobModal({ job, appId, onClose, onSaved }: Props) {
             <div className="flex rounded-lg overflow-hidden border border-white/10">
               <button
                 onClick={() => setType('command')}
-                className={`flex-1 py-2 text-xs font-medium transition-colors capitalize
+                className={`flex-1 py-2 text-xs font-medium transition-colors
                   ${type === 'command' ? 'bg-violet-600 text-white' : 'bg-white/5 text-gray-400 hover:text-gray-200'}`}>
                 Shell Command
               </button>
               {appId !== null && (
                 <button
                   onClick={() => setType('action')}
-                  className={`flex-1 py-2 text-xs font-medium transition-colors capitalize
+                  className={`flex-1 py-2 text-xs font-medium transition-colors
                     ${type === 'action' ? 'bg-violet-600 text-white' : 'bg-white/5 text-gray-400 hover:text-gray-200'}`}>
                   App Action
                 </button>
@@ -157,11 +204,7 @@ export default function CronJobModal({ job, appId, onClose, onSaved }: Props) {
           ) : (
             <div>
               <label className="block text-xs font-medium text-gray-400 mb-1.5">Action</label>
-              <select value={action} onChange={e => setAction(e.target.value)}
-                className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-violet-500/50">
-                <option value="restart">Restart app</option>
-                <option value="deploy">Deploy (git pull + rebuild)</option>
-              </select>
+              <Dropdown options={ACTIONS} value={action} onChange={setAction} />
             </div>
           )}
 
