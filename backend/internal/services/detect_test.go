@@ -200,3 +200,83 @@ func TestIsStaticType(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectAppType_ExpressDependency(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package.json", `{"dependencies":{"express":"4.18.0"}}`)
+	meta, err := DetectAppType(dir, "/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.AppType != "node" {
+		t.Errorf("expected node for express dep, got %s", meta.AppType)
+	}
+}
+
+func TestDetectAppType_CustomFallback(t *testing.T) {
+	dir := t.TempDir()
+	// package.json with no recognisable deps or scripts
+	writeFile(t, dir, "package.json", `{"name":"my-lib","version":"1.0.0"}`)
+	meta, err := DetectAppType(dir, "/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.AppType != "custom" {
+		t.Errorf("expected custom fallback, got %s", meta.AppType)
+	}
+}
+
+func TestDetectAppType_RootDirHint_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	// Hint points at an empty subdir with no recognisable files
+	if err := os.MkdirAll(filepath.Join(dir, "empty"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := DetectAppType(dir, "/empty")
+	if err == nil {
+		t.Fatal("expected error when hint subdir has no app files")
+	}
+}
+
+func TestDetectAppType_ClearWinner(t *testing.T) {
+	dir := t.TempDir()
+	// /web scores +2 (name) +1 (build script) = 3
+	writeFile(t, dir, "web/package.json", `{"devDependencies":{"vite":"5.0.0"},"scripts":{"build":"vite build"}}`)
+	// /api scores -3 (backend name) = -3
+	writeFile(t, dir, "api/package.json", `{"dependencies":{"express":"4.0.0"},"scripts":{"start":"node index.js"}}`)
+	meta, err := DetectAppType(dir, "/")
+	if err != nil {
+		t.Fatalf("unexpected error with clear winner: %v", err)
+	}
+	if meta.RootDir != "/web" {
+		t.Errorf("expected /web to win, got %s", meta.RootDir)
+	}
+}
+
+func TestDetectAppType_BackendPenalty(t *testing.T) {
+	dir := t.TempDir()
+	// api dir should score -3
+	writeFile(t, dir, "api/package.json", `{"scripts":{"start":"node index.js"}}`)
+	// web dir should score +2+1=3
+	writeFile(t, dir, "web/package.json", `{"devDependencies":{"vite":"5.0.0"},"scripts":{"build":"vite build"}}`)
+	meta, err := DetectAppType(dir, "/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.RootDir != "/web" {
+		t.Errorf("expected /web (not /api) to win, got %s", meta.RootDir)
+	}
+}
+
+func TestDetectAppType_InvalidPackageJSON(t *testing.T) {
+	dir := t.TempDir()
+	// Invalid JSON in package.json — should still return "node" (conservative fallback)
+	writeFile(t, dir, "package.json", `{not valid json`)
+	meta, err := DetectAppType(dir, "/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.AppType != "node" {
+		t.Errorf("expected node fallback for invalid JSON, got %s", meta.AppType)
+	}
+}
