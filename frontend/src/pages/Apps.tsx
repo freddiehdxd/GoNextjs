@@ -19,6 +19,20 @@ const DEPLOY_TYPES: { id: DeployType; label: string; desc: string; icon: React.R
   { id: 'empty',  label: 'Empty / Manual', desc: 'Create directory, upload files yourself',   icon: <Upload size={20} />,  color: '#f59e0b' },
 ];
 
+const APP_TYPE_OPTIONS = [
+  { value: '',       label: 'Auto-detect', hint: 'Detected on first deploy and saved. Can be changed later.' },
+  { value: 'next',   label: 'Next.js',     hint: 'SSR/SSG app served via PM2' },
+  { value: 'vite',   label: 'Vite / SPA',  hint: 'Static files served by NGINX from dist/' },
+  { value: 'node',   label: 'Node.js',     hint: 'Express, Fastify, or any Node server' },
+  { value: 'static', label: 'Static HTML', hint: 'Plain HTML/CSS/JS, no build step' },
+  { value: 'custom', label: 'Custom',       hint: 'Provide your own build and start commands' },
+];
+
+const STATIC_TYPES = new Set(['vite', 'static']);
+function isStaticApp(appType: string, startCmd: string) {
+  return STATIC_TYPES.has(appType) || (appType === 'custom' && !startCmd);
+}
+
 function bytes(b: number): string {
   if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
   if (b >= 1e6) return (b / 1e6).toFixed(0) + ' MB';
@@ -34,7 +48,12 @@ export default function AppsPage() {
   const [error,    setError]    = useState('');
 
   const [deployType, setDeployType] = useState<DeployType>('github');
-  const [form, setForm] = useState({ name: '', repo_url: '', branch: 'main' });
+  const [form, setForm] = useState({
+    name: '', repo_url: '', branch: 'main',
+    app_type: '', root_dir: '/', output_dir: 'dist',
+    build_cmd: '', start_cmd: '', install_cmd: '',
+  });
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [envEntries, setEnvEntries] = useState<EnvEntry[]>([{ key: '', value: '' }]);
 
   const fetchApps = useCallback(async () => {
@@ -48,8 +67,9 @@ export default function AppsPage() {
   function resetModal() {
     setShowNew(false); setError('');
     setDeployType('github');
-    setForm({ name: '', repo_url: '', branch: 'main' });
+    setForm({ name: '', repo_url: '', branch: 'main', app_type: '', root_dir: '/', output_dir: 'dist', build_cmd: '', start_cmd: '', install_cmd: '' });
     setEnvEntries([{ key: '', value: '' }]);
+    setShowAdvanced(false);
   }
 
   function canDeploy() {
@@ -64,10 +84,16 @@ export default function AppsPage() {
       envEntries.filter((e) => e.key).map((e) => [e.key, e.value])
     );
     const res = await api.post<App>('/apps', {
-      name:     form.name,
-      repo_url: deployType === 'empty' ? '' : form.repo_url,
-      branch:   form.branch,
+      name:       form.name,
+      repo_url:   deployType === 'empty' ? '' : form.repo_url,
+      branch:     form.branch,
       env_vars,
+      app_type:   form.app_type,
+      root_dir:   form.root_dir || '/',
+      output_dir: form.output_dir || 'dist',
+      build_cmd:  form.build_cmd,
+      start_cmd:  form.start_cmd,
+      install_cmd: form.install_cmd,
     });
     setActing(null);
     if (res.success) { resetModal(); await fetchApps(); }
@@ -169,6 +195,12 @@ export default function AppsPage() {
                     <div className="flex items-center gap-3">
                       <span className="font-semibold text-white text-sm hover:text-violet-400 transition-colors">{app.name}</span>
                       <StatusBadge status={app.status} />
+                      {app.app_type && app.app_type !== 'next' && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded text-gray-500"
+                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          {app.app_type}{app.root_dir && app.root_dir !== '/' ? ` · ${app.root_dir}` : ''}
+                        </span>
+                      )}
                       {app.domains.length > 0 && (
                         <a
                           href={`http${app.domains[0].ssl_enabled ? 's' : ''}://${app.domains[0].domain}`}
@@ -198,22 +230,26 @@ export default function AppsPage() {
 
                 {/* Actions */}
                 <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => doAction(app.name, 'restart')}
-                    disabled={!!acting}
-                    title="Restart"
-                    className="p-2 rounded-xl text-gray-600 hover:text-violet-400 hover:bg-violet-500/10 transition-all"
-                  >
-                    <RotateCcw size={14} className={acting === app.name + 'restart' ? 'animate-spin' : ''} />
-                  </button>
-                  <button
-                    onClick={() => doAction(app.name, app.status === 'online' ? 'stop' : 'start')}
-                    disabled={!!acting}
-                    title={app.status === 'online' ? 'Stop' : 'Start'}
-                    className="p-2 rounded-xl text-gray-600 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all"
-                  >
-                    {app.status === 'online' ? <Square size={14} /> : <Play size={14} />}
-                  </button>
+                  {!isStaticApp(app.app_type, app.start_cmd) && (
+                    <>
+                      <button
+                        onClick={() => doAction(app.name, 'restart')}
+                        disabled={!!acting}
+                        title="Restart"
+                        className="p-2 rounded-xl text-gray-600 hover:text-violet-400 hover:bg-violet-500/10 transition-all"
+                      >
+                        <RotateCcw size={14} className={acting === app.name + 'restart' ? 'animate-spin' : ''} />
+                      </button>
+                      <button
+                        onClick={() => doAction(app.name, app.status === 'online' ? 'stop' : 'start')}
+                        disabled={!!acting}
+                        title={app.status === 'online' ? 'Stop' : 'Start'}
+                        className="p-2 rounded-xl text-gray-600 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all"
+                      >
+                        {app.status === 'online' ? <Square size={14} /> : <Play size={14} />}
+                      </button>
+                    </>
+                  )}
                   {app.repo_url ? (
                     <>
                     <button
@@ -416,6 +452,86 @@ export default function AppsPage() {
                     onChange={(e) => setForm({ ...form, branch: e.target.value })} />
                 </div>
               </>
+            )}
+
+            {/* App Type */}
+            <div>
+              <label className="label">App Type</label>
+              <select
+                className="input"
+                value={form.app_type}
+                onChange={(e) => setForm({ ...form, app_type: e.target.value })}
+              >
+                {APP_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-600 mt-1.5">
+                {APP_TYPE_OPTIONS.find(o => o.value === form.app_type)?.hint ?? ''}
+              </p>
+            </div>
+
+            {/* Root Dir */}
+            <div>
+              <label className="label">Root Directory</label>
+              <input
+                className="input"
+                placeholder="/"
+                value={form.root_dir}
+                onChange={(e) => {
+                  let v = e.target.value;
+                  if (v && !v.startsWith('/')) v = '/' + v;
+                  v = v.replace(/\/+$/, '') || '/';
+                  setForm({ ...form, root_dir: v });
+                }}
+              />
+              <p className="text-xs text-gray-600 mt-1.5">Subdirectory containing your app (e.g. /web). Use / for repo root.</p>
+            </div>
+
+            {/* Output Dir — shown for static types and auto-detect */}
+            {(form.app_type === 'vite' || form.app_type === 'static' || form.app_type === 'custom' || form.app_type === '') && (
+              <div>
+                <label className="label">Output Directory</label>
+                <input
+                  className="input"
+                  placeholder="dist"
+                  value={form.output_dir}
+                  onChange={(e) => setForm({ ...form, output_dir: e.target.value || 'dist' })}
+                />
+                {form.app_type === 'vite' && (
+                  <p className="text-xs text-gray-600 mt-1.5">Must match <code className="text-gray-500">build.outDir</code> in vite.config</p>
+                )}
+              </div>
+            )}
+
+            {/* Advanced — Custom commands */}
+            {(form.app_type === 'custom' || showAdvanced) && (
+              <div className="rounded-xl border border-white/8 bg-white/[0.01] p-4 space-y-3">
+                <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Advanced / Custom Commands</p>
+                <div>
+                  <label className="label">Build Command</label>
+                  <input className="input font-mono text-xs" placeholder="npm run build" value={form.build_cmd}
+                    onChange={(e) => setForm({ ...form, build_cmd: e.target.value })} />
+                </div>
+                {form.app_type !== 'vite' && form.app_type !== 'static' && (
+                  <div>
+                    <label className="label">Start Command</label>
+                    <input className="input font-mono text-xs" placeholder="node server.js" value={form.start_cmd}
+                      onChange={(e) => setForm({ ...form, start_cmd: e.target.value })} />
+                  </div>
+                )}
+                <div>
+                  <label className="label">Install Command</label>
+                  <input className="input font-mono text-xs" placeholder="npm install" value={form.install_cmd}
+                    onChange={(e) => setForm({ ...form, install_cmd: e.target.value })} />
+                </div>
+              </div>
+            )}
+
+            {form.app_type !== 'custom' && !showAdvanced && (
+              <button type="button" className="btn-ghost text-xs" onClick={() => setShowAdvanced(true)}>
+                Advanced options (custom build/start/install commands)
+              </button>
             )}
 
             {/* Empty deploy info */}
