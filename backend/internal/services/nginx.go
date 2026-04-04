@@ -82,6 +82,100 @@ server {
 `, domain, port)
 }
 
+// BuildStaticConfig generates an NGINX server block that serves static files from docRoot.
+func (n *Nginx) BuildStaticConfig(domain, docRoot string, ssl bool) string {
+	if ssl {
+		return fmt.Sprintf(`# Managed by Panel -- do not edit manually
+server {
+    listen 80;
+    server_name %s;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name %s;
+
+    ssl_certificate /etc/letsencrypt/live/%s/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/%s/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    client_max_body_size 100M;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    root %s;
+    index index.html;
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|svg|woff2?)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+`, domain, domain, domain, domain, docRoot)
+	}
+
+	return fmt.Sprintf(`# Managed by Panel -- do not edit manually
+server {
+    listen 80;
+    server_name %s;
+
+    client_max_body_size 100M;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    root %s;
+    index index.html;
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|svg|woff2?)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+`, domain, docRoot)
+}
+
+// WriteStaticConfig writes a static-file NGINX config and creates the symlink.
+func (n *Nginx) WriteStaticConfig(domain, docRoot string, ssl bool) error {
+	config := n.BuildStaticConfig(domain, docRoot, ssl)
+
+	availPath := filepath.Join(n.availDir, domain)
+	enabledPath := filepath.Join(n.enabledDir, domain)
+
+	if err := os.WriteFile(availPath, []byte(config), 0644); err != nil {
+		return fmt.Errorf("write nginx static config: %w", err)
+	}
+
+	os.Remove(enabledPath)
+
+	if err := os.Symlink(availPath, enabledPath); err != nil {
+		return fmt.Errorf("create nginx symlink: %w", err)
+	}
+
+	return nil
+}
+
 // WriteConfig writes NGINX config and creates symlink
 func (n *Nginx) WriteConfig(domain string, port int, ssl bool) error {
 	config := n.BuildConfig(domain, port, ssl)
