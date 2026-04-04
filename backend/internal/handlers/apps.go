@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -145,10 +144,16 @@ func (h *AppsHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Create handles POST /api/apps
 func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name    string            `json:"name"`
-		RepoURL string            `json:"repo_url"`
-		Branch  string            `json:"branch"`
-		EnvVars map[string]string `json:"env_vars"`
+		Name       string            `json:"name"`
+		RepoURL    string            `json:"repo_url"`
+		Branch     string            `json:"branch"`
+		EnvVars    map[string]string `json:"env_vars"`
+		AppType    string            `json:"app_type"`
+		RootDir    string            `json:"root_dir"`
+		OutputDir  string            `json:"output_dir"`
+		BuildCmd   string            `json:"build_cmd"`
+		StartCmd   string            `json:"start_cmd"`
+		InstallCmd string            `json:"install_cmd"`
 	}
 	if err := ReadJSON(r, &body); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -159,27 +164,40 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "App name is required")
 		return
 	}
-
 	if !services.ValidateAppName(body.Name) {
 		Error(w, http.StatusBadRequest, "Invalid app name. Use lowercase letters, numbers and hyphens only.")
 		return
 	}
-
 	if body.RepoURL != "" && !repoURLPattern.MatchString(body.RepoURL) {
 		Error(w, http.StatusBadRequest, "Invalid repository URL. Must start with https:// or git@")
 		return
 	}
-
 	if body.Branch == "" {
 		body.Branch = "main"
 	}
 	if !branchPattern.MatchString(body.Branch) {
-		Error(w, http.StatusBadRequest, "Invalid branch name. Use letters, numbers, dots, hyphens and slashes only.")
+		Error(w, http.StatusBadRequest, "Invalid branch name.")
 		return
 	}
-
 	if body.EnvVars == nil {
 		body.EnvVars = make(map[string]string)
+	}
+
+	// Normalize fields
+	if body.AppType == "auto" {
+		body.AppType = ""
+	}
+	if body.RootDir == "" {
+		body.RootDir = "/"
+	}
+	if body.OutputDir == "" {
+		body.OutputDir = "dist"
+	}
+
+	// Validate root_dir
+	if !strings.HasPrefix(body.RootDir, "/") || strings.Contains(body.RootDir, "..") {
+		Error(w, http.StatusBadRequest, "root_dir must start with / and must not contain ..")
+		return
 	}
 
 	ctx := r.Context()
@@ -203,8 +221,6 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure app directory exists and write .env BEFORE deploy so the build
-	// can access env vars (Next.js auto-loads .env during `next build`).
 	appDir := h.cfg.AppsDir + "/" + body.Name
 	if err := os.MkdirAll(appDir, 0755); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to create app directory")
@@ -216,9 +232,21 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Deploy or leave as empty directory
+	// Resolved type (may be updated after deploy)
+	resolvedType := body.AppType
+	resolvedRoot := body.RootDir
+
+	// Deploy if repo URL provided
 	if body.RepoURL != "" {
-		result, err := h.exec.RunScript("deploy_next_app.sh",
+		scriptEnv := map[string]string{
+			"APP_TYPE":    body.AppType,
+			"ROOT_DIR":    body.RootDir,
+			"OUTPUT_DIR":  body.OutputDir,
+			"BUILD_CMD":   body.BuildCmd,
+			"START_CMD":   body.StartCmd,
+			"INSTALL_CMD": body.InstallCmd,
+		}
+		result, err := h.exec.RunScriptEnv("deploy_app.sh", scriptEnv,
 			body.Name, body.RepoURL, body.Branch, fmt.Sprintf("%d", port), "restart", "512")
 		if err != nil {
 			Error(w, http.StatusInternalServerError, "Deploy failed")
@@ -228,6 +256,14 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
 			return
 		}
+		// Read detected type from .panel_meta
+		if meta, err := readPanelMeta(appDir); err == nil && meta.AppType != "" {
+			resolvedType = meta.AppType
+			resolvedRoot = meta.RootDir
+		}
+		if resolvedType == "" {
+			resolvedType = "next"
+		}
 	}
 
 	// Insert into database
@@ -235,12 +271,15 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var app models.App
 	var envBytes []byte
 	err = h.db.QueryRow(ctx,
-		`INSERT INTO apps (name, repo_url, branch, port, env_vars)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, created_at, updated_at`,
+		`INSERT INTO apps (name, repo_url, branch, port, env_vars, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 RETURNING id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd, created_at, updated_at`,
 		body.Name, body.RepoURL, body.Branch, port, envJSON,
+		resolvedType, body.BuildCmd, body.StartCmd, resolvedRoot, body.OutputDir, body.InstallCmd,
 	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&envBytes, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts, &app.CreatedAt, &app.UpdatedAt)
+		&envBytes, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts,
+		&app.AppType, &app.BuildCmd, &app.StartCmd, &app.RootDir, &app.OutputDir, &app.InstallCmd,
+		&app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to save app")
 		return
@@ -273,7 +312,11 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 
 	switch body.Action {
 	case "start":
-		// Check if the app is already registered with PM2
+		if services.IsStaticType(app.AppType, app.StartCmd) {
+			Success(w, map[string]string{"message": "Static app — no process to start"})
+			return
+		}
+
 		pm2List, listErr := h.pm2.List()
 		isRegistered := false
 		if listErr == nil {
@@ -286,19 +329,17 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !isRegistered {
-			// App not in PM2 yet — run the appropriate setup script to build and register it
 			services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
 			var result *models.ExecResult
 			var err error
 			if app.RepoURL != "" {
-				result, err = h.exec.RunScript("deploy_next_app.sh",
+				result, err = h.exec.RunScriptEnv("deploy_app.sh", appEnvFromApp(app),
 					app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
 			} else {
-				result, err = h.exec.RunScript("setup_app.sh",
+				result, err = h.exec.RunScriptEnv("setup_app.sh", appEnvFromApp(app),
 					app.Name, fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
 			}
 			if err != nil {
-				log.Printf("Auto-setup on start failed for %s: %v", app.Name, err)
 				Error(w, http.StatusInternalServerError, "Failed to start app")
 				return
 			}
@@ -310,61 +351,51 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Already registered in PM2 — just start it
 		result, err := h.pm2.Action("start", app.Name)
 		if err != nil {
-			log.Printf("PM2 start failed for %s: %v", app.Name, err)
 			Error(w, http.StatusInternalServerError, "Failed to start app")
 			return
 		}
 		Success(w, map[string]string{"message": result.Stdout})
 
 	case "stop", "restart", "reload":
+		if services.IsStaticType(app.AppType, app.StartCmd) {
+			Success(w, map[string]string{"message": "Static app — no process to manage"})
+			return
+		}
 		result, err := h.pm2.Action(body.Action, app.Name)
 		if err != nil {
-			log.Printf("PM2 %s failed for %s: %v", body.Action, app.Name, err)
 			Error(w, http.StatusInternalServerError, "Failed to "+body.Action+" app")
 			return
 		}
 		Success(w, map[string]string{"message": result.Stdout})
 
 	case "delete":
-		// Delete from PM2 (best effort)
 		h.pm2.Action("delete", app.Name)
-
-		// Remove NGINX configs for all domains before DB delete
 		for _, d := range app.Domains {
 			h.nginx.RemoveConfig(d.Domain)
 		}
 		if len(app.Domains) > 0 {
-			h.nginx.TestAndReload() // best effort reload
+			h.nginx.TestAndReload()
 		}
-
-		// Delete from DB (CASCADE removes domain rows)
 		_, err := h.db.Exec(ctx, "DELETE FROM apps WHERE name = $1", app.Name)
 		if err != nil {
 			Error(w, http.StatusInternalServerError, "Failed to delete app")
 			return
 		}
-
-		// Clean up filesystem
 		appDir := filepath.Join(h.cfg.AppsDir, app.Name)
 		if resolved, err := filepath.Abs(appDir); err == nil && strings.HasPrefix(resolved, filepath.Clean(h.cfg.AppsDir)) {
 			os.RemoveAll(resolved)
 		}
-
 		Success(w, map[string]string{"message": "App deleted"})
 
 	case "rebuild":
 		if app.RepoURL == "" {
-			Error(w, http.StatusBadRequest, "Cannot rebuild -- app has no git repository")
+			Error(w, http.StatusBadRequest, "Cannot rebuild — app has no git repository")
 			return
 		}
-
-		// Write .env before rebuild so the script picks up current env vars
 		services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
-
-		result, err := h.exec.RunScript("deploy_next_app.sh",
+		result, err := h.exec.RunScriptEnv("deploy_app.sh", appEnvFromApp(app),
 			app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
 		if err != nil {
 			Error(w, http.StatusInternalServerError, "Rebuild failed")
@@ -374,17 +405,23 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
 			return
 		}
+		h.syncPanelMeta(ctx, app)
 		Success(w, map[string]string{"message": "Rebuild complete"})
 
 	case "setup":
-		// Write .env before setup so the script picks up current env vars
 		services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
-
-		// Install dependencies, build, and start via PM2 (for manually uploaded apps)
-		result, err := h.exec.RunScript("setup_app.sh",
+		appDir := filepath.Join(h.cfg.AppsDir, app.Name)
+		if app.AppType == "" || app.AppType == "next" {
+			if meta, err := services.DetectAppType(appDir, app.RootDir); err == nil && meta.AppType != "" {
+				app.AppType = meta.AppType
+				app.RootDir = meta.RootDir
+				h.db.Exec(ctx, "UPDATE apps SET app_type=$1, root_dir=$2, updated_at=NOW() WHERE name=$3",
+					app.AppType, app.RootDir, app.Name)
+			}
+		}
+		result, err := h.exec.RunScriptEnv("setup_app.sh", appEnvFromApp(app),
 			app.Name, fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
 		if err != nil {
-			log.Printf("Setup failed for %s: %v", app.Name, err)
 			Error(w, http.StatusInternalServerError, "Setup failed")
 			return
 		}
@@ -392,17 +429,22 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
 			return
 		}
-		Success(w, map[string]string{"message": "App deployed and running on port " + fmt.Sprintf("%d", app.Port)})
+		Success(w, map[string]string{"message": "App deployed on port " + fmt.Sprintf("%d", app.Port)})
 
 	case "setup-reload":
-		// Write .env before setup so the script picks up current env vars
 		services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
-
-		// Zero-downtime deploy: install, build, then PM2 reload (keeps old process serving until new one is ready)
-		result, err := h.exec.RunScript("setup_app.sh",
+		appDir := filepath.Join(h.cfg.AppsDir, app.Name)
+		if app.AppType == "" || app.AppType == "next" {
+			if meta, err := services.DetectAppType(appDir, app.RootDir); err == nil && meta.AppType != "" {
+				app.AppType = meta.AppType
+				app.RootDir = meta.RootDir
+				h.db.Exec(ctx, "UPDATE apps SET app_type=$1, root_dir=$2, updated_at=NOW() WHERE name=$3",
+					app.AppType, app.RootDir, app.Name)
+			}
+		}
+		result, err := h.exec.RunScriptEnv("setup_app.sh", appEnvFromApp(app),
 			app.Name, fmt.Sprintf("%d", app.Port), "reload", fmt.Sprintf("%d", app.MaxMemory))
 		if err != nil {
-			log.Printf("Setup-reload failed for %s: %v", app.Name, err)
 			Error(w, http.StatusInternalServerError, "Zero-downtime deploy failed")
 			return
 		}
@@ -410,19 +452,15 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
 			return
 		}
-		Success(w, map[string]string{"message": "Zero-downtime deploy complete on port " + fmt.Sprintf("%d", app.Port)})
+		Success(w, map[string]string{"message": "Zero-downtime deploy complete"})
 
 	case "rebuild-reload":
 		if app.RepoURL == "" {
-			Error(w, http.StatusBadRequest, "Cannot rebuild -- app has no git repository")
+			Error(w, http.StatusBadRequest, "Cannot rebuild — app has no git repository")
 			return
 		}
-
-		// Write .env before rebuild so the script picks up current env vars
 		services.WriteEnvFile(h.cfg.AppsDir, app.Name, app.EnvVars)
-
-		// Zero-downtime rebuild: pull, install, build, then PM2 reload
-		result, err := h.exec.RunScript("deploy_next_app.sh",
+		result, err := h.exec.RunScriptEnv("deploy_app.sh", appEnvFromApp(app),
 			app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "reload", fmt.Sprintf("%d", app.MaxMemory))
 		if err != nil {
 			Error(w, http.StatusInternalServerError, "Zero-downtime rebuild failed")
@@ -432,7 +470,28 @@ func (h *AppsHandler) Action(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusInternalServerError, sanitizeDeployError(result.Stderr))
 			return
 		}
+		h.syncPanelMeta(ctx, app)
 		Success(w, map[string]string{"message": "Zero-downtime rebuild complete"})
+
+	case "re-detect":
+		appDir := filepath.Join(h.cfg.AppsDir, app.Name)
+		meta, err := services.DetectAppType(appDir, "/")
+		if err != nil {
+			Error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_, err = h.db.Exec(ctx,
+			"UPDATE apps SET app_type=$1, root_dir=$2, updated_at=NOW() WHERE name=$3",
+			meta.AppType, meta.RootDir, app.Name)
+		if err != nil {
+			Error(w, http.StatusInternalServerError, "Failed to update app type")
+			return
+		}
+		Success(w, map[string]interface{}{
+			"message":  "App type re-detected",
+			"app_type": meta.AppType,
+			"root_dir": meta.RootDir,
+		})
 
 	default:
 		Error(w, http.StatusBadRequest, "Invalid action")
@@ -596,10 +655,10 @@ func (h *AppsHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	// Trigger rebuild or setup based on app type
 	go func() {
 		if app.RepoURL != "" {
-			h.exec.RunScript("deploy_next_app.sh",
+			h.exec.RunScriptEnv("deploy_app.sh", appEnvFromApp(app),
 				app.Name, app.RepoURL, app.Branch, fmt.Sprintf("%d", app.Port), "reload", fmt.Sprintf("%d", app.MaxMemory))
 		} else {
-			h.exec.RunScript("setup_app.sh",
+			h.exec.RunScriptEnv("setup_app.sh", appEnvFromApp(app),
 				app.Name, fmt.Sprintf("%d", app.Port), "reload", fmt.Sprintf("%d", app.MaxMemory))
 		}
 	}()
@@ -640,6 +699,20 @@ func (h *AppsHandler) getAppByName(ctx context.Context, name string) (*models.Ap
 	}
 
 	return &app, nil
+}
+
+// syncPanelMeta reads .panel_meta written by the deploy script and updates the DB if type changed.
+func (h *AppsHandler) syncPanelMeta(ctx context.Context, app *models.App) {
+	appDir := filepath.Join(h.cfg.AppsDir, app.Name)
+	meta, err := services.ReadPanelMeta(appDir)
+	if err != nil || meta.AppType == "" {
+		return
+	}
+	if meta.AppType == app.AppType && meta.RootDir == app.RootDir {
+		return
+	}
+	h.db.Exec(ctx, "UPDATE apps SET app_type=$1, root_dir=$2, updated_at=NOW() WHERE name=$3",
+		meta.AppType, meta.RootDir, app.Name)
 }
 
 // UploadProject handles POST /api/apps/:name/upload-project
