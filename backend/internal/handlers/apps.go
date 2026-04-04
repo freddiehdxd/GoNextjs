@@ -103,6 +103,8 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 				apps[i].Status = proc.Status
 				apps[i].CPU = proc.CPU
 				apps[i].Memory = proc.Memory
+			} else if services.IsStaticType(apps[i].AppType, apps[i].StartCmd) {
+				apps[i].Status = "online"
 			} else {
 				apps[i].Status = "stopped"
 			}
@@ -135,7 +137,11 @@ func (h *AppsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if app.Status == "" {
-		app.Status = "stopped"
+		if services.IsStaticType(app.AppType, app.StartCmd) {
+			app.Status = "online"
+		} else {
+			app.Status = "stopped"
+		}
 	}
 
 	Success(w, app)
