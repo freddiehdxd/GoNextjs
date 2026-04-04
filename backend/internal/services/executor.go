@@ -26,6 +26,7 @@ var allowedScripts = map[string]bool{
 	"install_postgres.sh": true,
 	"install_redis.sh":    true,
 	"deploy_next_app.sh":  true,
+	"deploy_app.sh":       true,
 	"setup_app.sh":        true,
 	"create_ssl.sh":       true,
 }
@@ -76,11 +77,67 @@ func (e *Executor) RunScript(script string, args ...string) (*models.ExecResult,
 	allArgs := append([]string{scriptPath}, args...)
 
 	timeout := defaultTimeout
-	if script == "deploy_next_app.sh" || script == "setup_app.sh" {
+	if script == "deploy_next_app.sh" || script == "deploy_app.sh" || script == "setup_app.sh" {
 		timeout = deployTimeout
 	}
 
 	return e.spawnSafe("/bin/bash", allArgs, timeout)
+}
+
+// RunScriptEnv runs an allowed shell script with extra environment variables and arguments.
+// extraEnv keys must not contain spaces or shell metacharacters.
+func (e *Executor) RunScriptEnv(script string, extraEnv map[string]string, args ...string) (*models.ExecResult, error) {
+	if !allowedScripts[script] {
+		return nil, fmt.Errorf("script not allowed: %s", script)
+	}
+
+	scriptPath := e.scriptsDir + "/" + script
+	allArgs := append([]string{scriptPath}, args...)
+
+	timeout := defaultTimeout
+	if script == "deploy_next_app.sh" || script == "deploy_app.sh" || script == "setup_app.sh" {
+		timeout = deployTimeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "/bin/bash", allArgs...)
+
+	// Base environment + caller-supplied extras
+	env := []string{
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/root",
+		"APPS_DIR=" + e.appsDir,
+	}
+	for k, v := range extraEnv {
+		env = append(env, k+"="+v)
+	}
+	cmd.Env = env
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{buf: &stdout, max: maxOutputSize}
+	cmd.Stderr = &limitedWriter{buf: &stderr, max: maxOutputSize}
+
+	err := cmd.Run()
+	result := &models.ExecResult{
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
+		Code:   0,
+	}
+
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			result.Code = timeoutCode
+			result.Stderr = result.Stderr + "\n... command timed out"
+		} else if exitErr, ok := err.(*exec.ExitError); ok {
+			result.Code = exitErr.ExitCode()
+		} else {
+			result.Code = 1
+			result.Stderr = err.Error()
+		}
+	}
+	return result, nil
 }
 
 // RunBin runs an allowed binary with arguments
