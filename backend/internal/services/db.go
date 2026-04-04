@@ -204,6 +204,18 @@ var migrations = []struct {
 			CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id ON cron_runs(job_id);
 		`,
 	},
+	{
+		version:     5,
+		description: "Add app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd to apps",
+		sql: `
+			ALTER TABLE apps ADD COLUMN IF NOT EXISTS app_type    TEXT NOT NULL DEFAULT 'next';
+			ALTER TABLE apps ADD COLUMN IF NOT EXISTS build_cmd   TEXT NOT NULL DEFAULT '';
+			ALTER TABLE apps ADD COLUMN IF NOT EXISTS start_cmd   TEXT NOT NULL DEFAULT '';
+			ALTER TABLE apps ADD COLUMN IF NOT EXISTS root_dir    TEXT NOT NULL DEFAULT '/';
+			ALTER TABLE apps ADD COLUMN IF NOT EXISTS output_dir  TEXT NOT NULL DEFAULT 'dist';
+			ALTER TABLE apps ADD COLUMN IF NOT EXISTS install_cmd TEXT NOT NULL DEFAULT '';
+		`,
+	},
 }
 
 // InitSchema runs all pending migrations in order and performs cleanup.

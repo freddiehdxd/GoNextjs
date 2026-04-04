@@ -23,6 +23,12 @@ type App struct {
 	WebhookSecret string            `json:"webhook_secret,omitempty"`
 	MaxMemory     int               `json:"max_memory"`
 	MaxRestarts   int               `json:"max_restarts"`
+	AppType       string            `json:"app_type"`
+	BuildCmd      string            `json:"build_cmd"`
+	StartCmd      string            `json:"start_cmd"`
+	RootDir       string            `json:"root_dir"`
+	OutputDir     string            `json:"output_dir"`
+	InstallCmd    string            `json:"install_cmd"`
 	CreatedAt     time.Time         `json:"created_at"`
 	UpdatedAt     time.Time         `json:"updated_at"`
 	// Enriched fields from PM2 (not stored in DB)
