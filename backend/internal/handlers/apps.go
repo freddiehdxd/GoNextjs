@@ -48,7 +48,7 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	rows, err := h.db.Query(ctx,
-		"SELECT id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, created_at, updated_at FROM apps ORDER BY created_at DESC")
+		"SELECT id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd, created_at, updated_at FROM apps ORDER BY created_at DESC")
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to fetch apps")
 		return
@@ -60,7 +60,9 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 		var app models.App
 		var envJSON []byte
 		if err := rows.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-			&envJSON, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts, &app.CreatedAt, &app.UpdatedAt); err != nil {
+			&envJSON, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts,
+			&app.AppType, &app.BuildCmd, &app.StartCmd, &app.RootDir, &app.OutputDir, &app.InstallCmd,
+			&app.CreatedAt, &app.UpdatedAt); err != nil {
 			Error(w, http.StatusInternalServerError, "Failed to scan app")
 			return
 		}
@@ -463,10 +465,12 @@ func (h *AppsHandler) UpdateEnv(w http.ResponseWriter, r *http.Request) {
 	var envBytes []byte
 	err = h.db.QueryRow(ctx,
 		`UPDATE apps SET env_vars = $1, updated_at = NOW() WHERE name = $2
-		 RETURNING id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, created_at, updated_at`,
+     RETURNING id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd, created_at, updated_at`,
 		envJSON, name,
 	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&envBytes, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts, &app.CreatedAt, &app.UpdatedAt)
+		&envBytes, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts,
+		&app.AppType, &app.BuildCmd, &app.StartCmd, &app.RootDir, &app.OutputDir, &app.InstallCmd,
+		&app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update env vars")
 		return
@@ -608,10 +612,12 @@ func (h *AppsHandler) getAppByName(ctx context.Context, name string) (*models.Ap
 	var app models.App
 	var envJSON []byte
 	err := h.db.QueryRow(ctx,
-		"SELECT id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, created_at, updated_at FROM apps WHERE name = $1",
+		"SELECT id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd, created_at, updated_at FROM apps WHERE name = $1",
 		name,
 	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&envJSON, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts, &app.CreatedAt, &app.UpdatedAt)
+		&envJSON, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts,
+		&app.AppType, &app.BuildCmd, &app.StartCmd, &app.RootDir, &app.OutputDir, &app.InstallCmd,
+		&app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -817,6 +823,23 @@ func parseEnvFile(path string) (map[string]string, error) {
 	}
 
 	return vars, nil
+}
+
+// appEnvFromApp returns env vars to pass to deploy scripts for a given app.
+func appEnvFromApp(app *models.App) map[string]string {
+	return map[string]string{
+		"APP_TYPE":    app.AppType,
+		"ROOT_DIR":    app.RootDir,
+		"OUTPUT_DIR":  app.OutputDir,
+		"BUILD_CMD":   app.BuildCmd,
+		"START_CMD":   app.StartCmd,
+		"INSTALL_CMD": app.InstallCmd,
+	}
+}
+
+// readPanelMeta reads the .panel_meta file written by deploy scripts.
+func readPanelMeta(appDir string) (services.PanelMeta, error) {
+	return services.ReadPanelMeta(appDir)
 }
 
 // sanitizeDeployError extracts a meaningful error message from deploy script stderr.
