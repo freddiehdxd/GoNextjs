@@ -267,7 +267,7 @@ PM2_SCRIPT="npm"
 PM2_ARGS="start"
 if [ -n "$START_CMD" ]; then
   PM2_SCRIPT="bash"
-  PM2_ARGS="-c ${START_CMD}"
+  PM2_ARGS="-c \"${START_CMD}\""
 fi
 
 cat > "${APP_DIR}/ecosystem.config.js" <<EOF
