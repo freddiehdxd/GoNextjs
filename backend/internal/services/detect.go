@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ type PanelMeta struct {
 // Returns a zero-value PanelMeta and no error if the file doesn't exist.
 func ReadPanelMeta(appDir string) (PanelMeta, error) {
 	data, err := os.ReadFile(filepath.Join(appDir, ".panel_meta"))
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return PanelMeta{}, nil
 	}
 	if err != nil {
