@@ -1,150 +1,170 @@
 #!/usr/bin/env bash
-# setup_app.sh — Install, build, and start an uploaded Next.js app with PM2
-# Usage: setup_app.sh <app_name> <port>
-#
-# This is the counterpart to deploy_next_app.sh for manually-uploaded projects.
-# It skips the git clone step and works directly with whatever files are in the app dir.
+# setup_app.sh — Install, build, and start a manually-uploaded app
+# Usage: setup_app.sh <app_name> <port> [pm2_mode] [max_memory]
+# Env vars: APP_TYPE, ROOT_DIR, OUTPUT_DIR, BUILD_CMD, START_CMD, INSTALL_CMD
 set -euo pipefail
 
 APP_NAME="${1:?app_name is required}"
 PORT="${2:?port is required}"
-PM2_MODE="${3:-restart}"   # "restart" (default) or "reload" (zero-downtime)
-MAX_MEMORY="${4:-512}"     # max memory in MB for PM2 max_memory_restart
+PM2_MODE="${3:-restart}"
+if [[ "$PM2_MODE" != "restart" && "$PM2_MODE" != "reload" ]]; then
+  echo "[error] Invalid PM2_MODE: ${PM2_MODE} (must be restart or reload)" >&2; exit 1
+fi
+MAX_MEMORY="${4:-512}"
+if ! [[ "$MAX_MEMORY" =~ ^[0-9]+$ ]]; then
+  echo "[error] Invalid MAX_MEMORY: ${MAX_MEMORY}" >&2; exit 1
+fi
 APPS_DIR="${APPS_DIR:-/var/www/apps}"
+
+APP_TYPE="${APP_TYPE:-}"
+ROOT_DIR="${ROOT_DIR:-/}"
+OUTPUT_DIR="${OUTPUT_DIR:-dist}"
+if [[ "$OUTPUT_DIR" =~ \.\. ]]; then
+  echo "[error] OUTPUT_DIR must not contain .." >&2; exit 1
+fi
+BUILD_CMD="${BUILD_CMD:-}"
+START_CMD="${START_CMD:-}"
+INSTALL_CMD="${INSTALL_CMD:-}"
 
 # ── Validation ─────────────────────────────────────────────────────────────
 if ! [[ "$APP_NAME" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]]; then
-  echo "[error] Invalid app name: ${APP_NAME}" >&2
-  exit 1
+  echo "[error] Invalid app name: ${APP_NAME}" >&2; exit 1
 fi
 
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1024 || PORT > 65535 )); then
-  echo "[error] Invalid port: ${PORT}" >&2
-  exit 1
+  echo "[error] Invalid port: ${PORT}" >&2; exit 1
 fi
 
 APP_DIR="${APPS_DIR}/${APP_NAME}"
-
 if [ ! -d "${APP_DIR}" ]; then
-  echo "[error] App directory not found: ${APP_DIR}" >&2
-  exit 1
+  echo "[error] App directory not found: ${APP_DIR}" >&2; exit 1
 fi
 
-cd "${APP_DIR}"
+# ── Resolve working directory ──────────────────────────────────────────────
+WORK_DIR="${APP_DIR}${ROOT_DIR%/}"
+[ -z "$WORK_DIR" ] && WORK_DIR="$APP_DIR"
 
-# ── Handle nested directory (zip extracts into a subfolder) ────────────────
-# If there's no package.json at the root but exactly one subdirectory has one,
-# move everything up from that subdirectory to the app root.
-if [ ! -f "package.json" ]; then
-  echo "[setup] No package.json at root, checking subdirectories..."
+# Handle nested zip: if WORK_DIR doesn't exist but there's one subdir with package.json, move it
+if [ ! -d "$WORK_DIR" ] || { [ "$ROOT_DIR" = "/" ] && [ ! -f "${WORK_DIR}/package.json" ]; }; then
+  cd "${APP_DIR}"
   SUBDIRS_WITH_PKG=()
   for d in */; do
-    if [ -f "${d}package.json" ]; then
-      SUBDIRS_WITH_PKG+=("$d")
-    fi
+    [ -f "${d}package.json" ] && SUBDIRS_WITH_PKG+=("$d")
   done
-
   if [ "${#SUBDIRS_WITH_PKG[@]}" -eq 1 ]; then
     SUBDIR="${SUBDIRS_WITH_PKG[0]}"
-    echo "[setup] Found package.json in ${SUBDIR} — moving contents to app root..."
-    # Move all files from subdirectory to root (including dotfiles)
+    echo "[setup] Moving contents of ${SUBDIR} to app root..."
     shopt -s dotglob
     mv "${SUBDIR}"* . 2>/dev/null || true
     shopt -u dotglob
     rmdir "${SUBDIR}" 2>/dev/null || true
-    echo "[setup] Files moved to app root."
-  elif [ "${#SUBDIRS_WITH_PKG[@]}" -eq 0 ]; then
-    echo "[error] No package.json found in app directory or any subdirectory" >&2
-    exit 1
-  else
-    echo "[error] Multiple subdirectories with package.json found — cannot auto-detect project root" >&2
-    echo "[error] Please upload a zip where the project is at the root level" >&2
-    exit 1
+  elif [ "${#SUBDIRS_WITH_PKG[@]}" -gt 1 ]; then
+    echo "[error] Multiple package.json found — set root_dir to specify which to deploy" >&2; exit 1
   fi
+  WORK_DIR="${APP_DIR}"
 fi
 
-echo "[setup] Setting up ${APP_NAME} on port ${PORT}"
+cd "${WORK_DIR}"
+
+# ── Write .panel_meta ──────────────────────────────────────────────────────
+# APP_TYPE is already resolved by the backend before calling this script
+RESOLVED_TYPE="${APP_TYPE:-node}"
+cat > "${APP_DIR}/.panel_meta" <<EOF
+{"app_type":"${RESOLVED_TYPE}","root_dir":"${ROOT_DIR}"}
+EOF
+
+echo "[setup] Setting up ${APP_NAME} (type: ${RESOLVED_TYPE}) on port ${PORT}"
 
 # ── Install dependencies ───────────────────────────────────────────────────
-echo "[setup] Installing dependencies..."
-if [ -f "package-lock.json" ]; then
-  npm ci --production=false 2>&1
-else
-  npm install 2>&1
-fi
-
-# ── Detect project type and configure scripts ─────────────────────────────
-HAS_BUILD=$(node -e "const p=require('./package.json'); process.stdout.write(p.scripts&&p.scripts.build?'yes':'no')")
-HAS_START=$(node -e "const p=require('./package.json'); process.stdout.write(p.scripts&&p.scripts.start?'yes':'no')")
-
-# Check if it's a Next.js project
-IS_NEXT="no"
-if node -e "const p=require('./package.json'); const d={...p.dependencies,...p.devDependencies}; process.exit(d.next?0:1)" 2>/dev/null; then
-  IS_NEXT="yes"
-fi
-
-# Add missing build script
-if [ "$HAS_BUILD" = "no" ]; then
-  if [ "$IS_NEXT" = "yes" ]; then
-    echo "[setup] No build script found — adding 'next build'..."
-    node -e "
-      const fs = require('fs');
-      const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-      pkg.scripts = pkg.scripts || {};
-      pkg.scripts.build = 'next build';
-      fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-    "
+if [ "$RESOLVED_TYPE" != "static" ]; then
+  if [ -n "$INSTALL_CMD" ]; then
+    echo "[setup] Running custom install: ${INSTALL_CMD}"
+    eval "$INSTALL_CMD"
+  elif [ -f "pnpm-lock.yaml" ]; then
+    command -v pnpm &>/dev/null || { echo "[error] pnpm not installed" >&2; exit 1; }
+    pnpm install
+  elif [ -f "yarn.lock" ]; then
+    command -v yarn &>/dev/null || { echo "[error] yarn not installed" >&2; exit 1; }
+    yarn install
+  elif [ -f "package-lock.json" ]; then
+    npm ci --production=false
   else
-    echo "[setup] No build script found — skipping build step."
+    npm install
   fi
 fi
 
-# Add missing start script
-if [ "$HAS_START" = "no" ]; then
-  if [ "$IS_NEXT" = "yes" ]; then
-    echo "[setup] No start script found — adding 'next start'..."
-    node -e "
-      const fs = require('fs');
-      const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-      pkg.scripts = pkg.scripts || {};
-      pkg.scripts.start = 'next start -p \${PORT:-${PORT}}';
-      fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-    "
-  else
-    echo "[setup] No start script found — adding default 'node index.js'..."
-    node -e "
-      const fs = require('fs');
-      const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-      pkg.scripts = pkg.scripts || {};
-      pkg.scripts.start = 'node index.js';
-      fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-    "
-  fi
+# ── Cleanup previous build output ─────────────────────────────────────────
+IS_STATIC=false
+if [ "$RESOLVED_TYPE" = "vite" ] || [ "$RESOLVED_TYPE" = "static" ]; then
+  IS_STATIC=true
+fi
+if [ "$RESOLVED_TYPE" = "custom" ] && [ -z "$START_CMD" ]; then
+  IS_STATIC=true
 fi
 
-# Re-check after possible modifications
-HAS_BUILD=$(node -e "const p=require('./package.json'); process.stdout.write(p.scripts&&p.scripts.build?'yes':'no')")
+if [ "$IS_STATIC" = "true" ]; then
+  FULL_OUTPUT="${WORK_DIR}/${OUTPUT_DIR}"
+  if [ -n "$OUTPUT_DIR" ] && [ "$OUTPUT_DIR" != "/" ] && [ -d "$FULL_OUTPUT" ]; then
+    find "$FULL_OUTPUT" -mindepth 1 -delete 2>/dev/null || true
+  fi
+fi
 
 # ── Build ──────────────────────────────────────────────────────────────────
-if [ "$HAS_BUILD" = "yes" ]; then
-  echo "[setup] Building project..."
-  NODE_ENV=production npm run build 2>&1
+if [ -n "$BUILD_CMD" ]; then
+  echo "[setup] Running custom build: ${BUILD_CMD}"
+  NODE_ENV=production eval "$BUILD_CMD"
+elif [ "$RESOLVED_TYPE" = "static" ]; then
+  echo "[setup] Static app — no build step."
 else
-  echo "[setup] No build script — skipping build."
+  HAS_BUILD=$(node -e "const p=require('./package.json');process.stdout.write(p.scripts&&p.scripts.build?'yes':'no')" 2>/dev/null || echo "no")
+  if [ "$HAS_BUILD" = "yes" ]; then
+    echo "[setup] Building..."
+    NODE_ENV=production npm run build
+  elif [ "$RESOLVED_TYPE" = "custom" ] && [ -z "$START_CMD" ]; then
+    echo "[error] custom app has no build script and BUILD_CMD is not set" >&2; exit 1
+  else
+    echo "[setup] No build script — skipping."
+  fi
+fi
+
+# ── Post-build validation for static types ────────────────────────────────
+if [ "$IS_STATIC" = "true" ]; then
+  INDEX_PATH="${WORK_DIR}/${OUTPUT_DIR}/index.html"
+  if [ ! -f "$INDEX_PATH" ]; then
+    echo "[error] No index.html found in ${OUTPUT_DIR} — not a valid static app" >&2; exit 1
+  fi
+  echo "[setup] Static app verified."
+  nginx -t && nginx -s reload 2>/dev/null || true
+  echo "[setup] ${APP_NAME} deployed as static app."
+  exit 0
+fi
+
+# ── Ensure start script ────────────────────────────────────────────────────
+HAS_START=$(node -e "const p=require('./package.json');process.stdout.write(p.scripts&&p.scripts.start?'yes':'no')" 2>/dev/null || echo "no")
+if [ -z "$START_CMD" ] && [ "$HAS_START" = "no" ]; then
+  if [ "$RESOLVED_TYPE" = "next" ]; then
+    node -e "
+      const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+      pkg.scripts=pkg.scripts||{};pkg.scripts.start='next start -p \${PORT:-${PORT}}';
+      fs.writeFileSync('package.json',JSON.stringify(pkg,null,2));
+    "
+  else
+    node -e "
+      const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
+      pkg.scripts=pkg.scripts||{};pkg.scripts.start='node index.js';
+      fs.writeFileSync('package.json',JSON.stringify(pkg,null,2));
+    "
+  fi
 fi
 
 # ── Log directory ──────────────────────────────────────────────────────────
 mkdir -p /var/log/panel
 
 # ── PM2 ecosystem file ─────────────────────────────────────────────────────
-echo "[setup] Creating PM2 ecosystem config..."
-
-# Build env block: always include NODE_ENV and PORT, then merge .env vars
 ENV_BLOCK="      NODE_ENV: 'production',
       PORT:     '${PORT}',"
 
 if [ -f "${APP_DIR}/.env" ]; then
-  echo "[setup] Loading environment variables from .env..."
   EXTRA_ENV=$(node -e "
     const fs = require('fs');
     const lines = fs.readFileSync('${APP_DIR}/.env', 'utf8').split('\n');
@@ -163,19 +183,24 @@ if [ -f "${APP_DIR}/.env" ]; then
       console.log(\"      '\" + key + \"': '\" + val + \"',\");
     });
   " 2>/dev/null)
-  if [ -n "$EXTRA_ENV" ]; then
-    ENV_BLOCK="${ENV_BLOCK}
+  [ -n "$EXTRA_ENV" ] && ENV_BLOCK="${ENV_BLOCK}
 ${EXTRA_ENV}"
-  fi
+fi
+
+PM2_SCRIPT="npm"
+PM2_ARGS="start"
+if [ -n "$START_CMD" ]; then
+  PM2_SCRIPT="bash"
+  PM2_ARGS="-c ${START_CMD}"
 fi
 
 cat > "${APP_DIR}/ecosystem.config.js" <<EOF
 module.exports = {
   apps: [{
     name:    '${APP_NAME}',
-    cwd:     '${APP_DIR}',
-    script:  'npm',
-    args:    'start',
+    cwd:     '${WORK_DIR}',
+    script:  '${PM2_SCRIPT}',
+    args:    '${PM2_ARGS}',
     env: {
 ${ENV_BLOCK}
     },
@@ -189,20 +214,15 @@ ${ENV_BLOCK}
 };
 EOF
 
-# ── Start or reload/restart with PM2 ───────────────────────────────────────
 if pm2 describe "${APP_NAME}" &>/dev/null; then
   if [ "$PM2_MODE" = "reload" ]; then
-    echo "[setup] Zero-downtime reload of PM2 process..."
-    pm2 reload "${APP_NAME}" --update-env 2>&1
+    pm2 reload "${APP_NAME}" --update-env
   else
-    echo "[setup] Restarting PM2 process..."
-    pm2 restart "${APP_NAME}" --update-env 2>&1
+    pm2 restart "${APP_NAME}" --update-env
   fi
 else
-  echo "[setup] Starting new PM2 process..."
-  pm2 start "${APP_DIR}/ecosystem.config.js" 2>&1
+  pm2 start "${APP_DIR}/ecosystem.config.js"
 fi
 
 pm2 save 2>/dev/null || true
-
 echo "[setup] ${APP_NAME} is now running on port ${PORT}."
