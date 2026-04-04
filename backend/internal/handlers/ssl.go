@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"panel-backend/internal/services"
@@ -11,14 +13,15 @@ import (
 
 // SSLHandler handles SSL/TLS certificate routes
 type SSLHandler struct {
-	db    *services.DB
-	nginx *services.Nginx
-	exec  *services.Executor
+	db      *services.DB
+	nginx   *services.Nginx
+	exec    *services.Executor
+	appsDir string
 }
 
 // NewSSLHandler creates a new SSL handler
-func NewSSLHandler(db *services.DB, nginx *services.Nginx, exec *services.Executor) *SSLHandler {
-	return &SSLHandler{db: db, nginx: nginx, exec: exec}
+func NewSSLHandler(db *services.DB, nginx *services.Nginx, exec *services.Executor, appsDir string) *SSLHandler {
+	return &SSLHandler{db: db, nginx: nginx, exec: exec, appsDir: appsDir}
 }
 
 // Enable handles POST /api/ssl
@@ -45,16 +48,19 @@ func (h *SSLHandler) Enable(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	// Look up domain and app port
+	// Look up domain and app info
+	var appID, appType, rootDir, outputDir, startCmd string
 	var port int
 	err := h.db.QueryRow(ctx,
-		`SELECT a.port FROM domains d JOIN apps a ON a.id = d.app_id WHERE d.domain = $1`,
+		`SELECT a.id, a.port, a.app_type, a.root_dir, a.output_dir, a.start_cmd
+		 FROM domains d JOIN apps a ON a.id = d.app_id WHERE d.domain = $1`,
 		body.Domain,
-	).Scan(&port)
+	).Scan(&appID, &port, &appType, &rootDir, &outputDir, &startCmd)
 	if err != nil {
 		Error(w, http.StatusNotFound, "Domain not found")
 		return
 	}
+	_ = appID
 
 	// Run certbot script
 	result, err := h.exec.RunScript("create_ssl.sh", body.Domain, body.Email)
@@ -69,8 +75,21 @@ func (h *SSLHandler) Enable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Rewrite NGINX config with SSL enabled
-	if err := h.nginx.WriteConfig(body.Domain, port, true); err != nil {
-		log.Printf("Failed to write NGINX SSL config for %s: %v", body.Domain, err)
+	var writeErr error
+	if services.IsStaticType(appType, startCmd) {
+		var appName string
+		h.db.QueryRow(ctx, `SELECT a.name FROM domains d JOIN apps a ON a.id = d.app_id WHERE d.domain = $1`, body.Domain).Scan(&appName)
+		workDir := filepath.Join(h.appsDir, appName)
+		if rootDir != "/" && rootDir != "" {
+			workDir = filepath.Join(workDir, filepath.FromSlash(strings.TrimPrefix(rootDir, "/")))
+		}
+		docRoot := filepath.Join(workDir, outputDir)
+		writeErr = h.nginx.WriteStaticConfig(body.Domain, docRoot, true)
+	} else {
+		writeErr = h.nginx.WriteConfig(body.Domain, port, true)
+	}
+	if writeErr != nil {
+		log.Printf("Failed to write NGINX SSL config for %s: %v", body.Domain, writeErr)
 		Error(w, http.StatusInternalServerError, "Failed to configure NGINX for SSL")
 		return
 	}
@@ -110,28 +129,44 @@ func (h *SSLHandler) Disable(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// Look up domain and app port
-	var port int
+	// Look up domain and app info
+	var disableAppID, disableAppType, disableRootDir, disableOutputDir, disableStartCmd string
+	var disablePort int
 	err := h.db.QueryRow(ctx,
-		`SELECT a.port FROM domains d JOIN apps a ON a.id = d.app_id WHERE d.domain = $1`,
+		`SELECT a.id, a.port, a.app_type, a.root_dir, a.output_dir, a.start_cmd
+		 FROM domains d JOIN apps a ON a.id = d.app_id WHERE d.domain = $1`,
 		body.Domain,
-	).Scan(&port)
+	).Scan(&disableAppID, &disablePort, &disableAppType, &disableRootDir, &disableOutputDir, &disableStartCmd)
 	if err != nil {
 		Error(w, http.StatusNotFound, "Domain not found")
 		return
 	}
+	_ = disableAppID
 
-	// Rewrite NGINX config without SSL (HTTP-only proxy)
-	if err := h.nginx.WriteConfig(body.Domain, port, false); err != nil {
-		log.Printf("Failed to write NGINX config for %s: %v", body.Domain, err)
-		Error(w, http.StatusInternalServerError, "Failed to update NGINX configuration")
+	// Rewrite NGINX config without SSL
+	var disableWriteErr error
+	if services.IsStaticType(disableAppType, disableStartCmd) {
+		var appName string
+		h.db.QueryRow(ctx, `SELECT a.name FROM domains d JOIN apps a ON a.id = d.app_id WHERE d.domain = $1`, body.Domain).Scan(&appName)
+		workDir := filepath.Join(h.appsDir, appName)
+		if disableRootDir != "/" && disableRootDir != "" {
+			workDir = filepath.Join(workDir, filepath.FromSlash(strings.TrimPrefix(disableRootDir, "/")))
+		}
+		docRoot := filepath.Join(workDir, disableOutputDir)
+		disableWriteErr = h.nginx.WriteStaticConfig(body.Domain, docRoot, false)
+	} else {
+		disableWriteErr = h.nginx.WriteConfig(body.Domain, disablePort, false)
+	}
+	if disableWriteErr != nil {
+		log.Printf("Failed to write NGINX config for %s: %v", body.Domain, disableWriteErr)
+		Error(w, http.StatusInternalServerError, "Failed to update NGINX config")
 		return
 	}
 
 	// Test and reload NGINX
 	if err := h.nginx.TestAndReload(); err != nil {
 		// Rollback to SSL config
-		h.nginx.WriteConfig(body.Domain, port, true)
+		h.nginx.WriteConfig(body.Domain, disablePort, true)
 		h.nginx.TestAndReload()
 		log.Printf("NGINX reload failed after SSL disable for %s: %v", body.Domain, err)
 		Error(w, http.StatusInternalServerError, "NGINX configuration test failed, changes rolled back")

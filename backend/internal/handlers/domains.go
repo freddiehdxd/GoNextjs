@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -14,13 +16,14 @@ import (
 
 // DomainsHandler handles domain management routes
 type DomainsHandler struct {
-	db    *services.DB
-	nginx *services.Nginx
+	db      *services.DB
+	nginx   *services.Nginx
+	appsDir string
 }
 
 // NewDomainsHandler creates a new domains handler
-func NewDomainsHandler(db *services.DB, nginx *services.Nginx) *DomainsHandler {
-	return &DomainsHandler{db: db, nginx: nginx}
+func NewDomainsHandler(db *services.DB, nginx *services.Nginx, appsDir string) *DomainsHandler {
+	return &DomainsHandler{db: db, nginx: nginx, appsDir: appsDir}
 }
 
 // Add handles POST /api/domains
@@ -48,11 +51,12 @@ func (h *DomainsHandler) Add(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Get app
-	var appID string
+	var appID, appType, rootDir, outputDir, startCmd string
 	var appPort int
 	err := h.db.QueryRow(ctx,
-		"SELECT id, port FROM apps WHERE name = $1", body.AppName,
-	).Scan(&appID, &appPort)
+		"SELECT id, port, app_type, root_dir, output_dir, start_cmd FROM apps WHERE name = $1",
+		body.AppName,
+	).Scan(&appID, &appPort, &appType, &rootDir, &outputDir, &startCmd)
 	if err != nil {
 		Error(w, http.StatusNotFound, "App not found")
 		return
@@ -69,8 +73,19 @@ func (h *DomainsHandler) Add(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Write HTTP-only NGINX config
-	if err := h.nginx.WriteConfig(body.Domain, appPort, false); err != nil {
-		log.Printf("Failed to write NGINX config for %s: %v", body.Domain, err)
+	var nginxErr error
+	if services.IsStaticType(appType, startCmd) {
+		workDir := filepath.Join(h.appsDir, body.AppName)
+		if rootDir != "/" && rootDir != "" {
+			workDir = filepath.Join(workDir, filepath.FromSlash(strings.TrimPrefix(rootDir, "/")))
+		}
+		docRoot := filepath.Join(workDir, outputDir)
+		nginxErr = h.nginx.WriteStaticConfig(body.Domain, docRoot, false)
+	} else {
+		nginxErr = h.nginx.WriteConfig(body.Domain, appPort, false)
+	}
+	if nginxErr != nil {
+		log.Printf("Failed to write NGINX config for %s: %v", body.Domain, nginxErr)
 		Error(w, http.StatusInternalServerError, "Failed to configure NGINX for domain")
 		return
 	}

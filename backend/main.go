@@ -50,8 +50,8 @@ func main() {
 	// Create handlers
 	authHandler := handlers.NewAuthHandler(cfg)
 	appsHandler := handlers.NewAppsHandler(db, pm2, exec, portAlloc, nginx, cfg)
-	domainsHandler := handlers.NewDomainsHandler(db, nginx)
-	sslHandler := handlers.NewSSLHandler(db, nginx, exec)
+	domainsHandler := handlers.NewDomainsHandler(db, nginx, cfg.AppsDir)
+	sslHandler := handlers.NewSSLHandler(db, nginx, exec, cfg.AppsDir)
 	dbHandler := handlers.NewDatabasesHandler(db, cfg, exec)
 	redisHandler := handlers.NewRedisHandler(exec)
 	filesHandler := handlers.NewFilesHandler(cfg)
