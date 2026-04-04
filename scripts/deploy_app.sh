@@ -9,13 +9,22 @@ REPO_URL="${2:?repo_url is required}"
 BRANCH="${3:-main}"
 PORT="${4:?port is required}"
 PM2_MODE="${5:-restart}"
+if [[ "$PM2_MODE" != "restart" && "$PM2_MODE" != "reload" ]]; then
+  echo "[error] Invalid PM2_MODE: ${PM2_MODE} (must be restart or reload)" >&2; exit 1
+fi
 MAX_MEMORY="${6:-512}"
+if ! [[ "$MAX_MEMORY" =~ ^[0-9]+$ ]]; then
+  echo "[error] Invalid MAX_MEMORY: ${MAX_MEMORY}" >&2; exit 1
+fi
 APPS_DIR="${APPS_DIR:-/var/www/apps}"
 
 # New fields from env (empty = auto-detect or default)
 APP_TYPE="${APP_TYPE:-}"
 ROOT_DIR="${ROOT_DIR:-/}"
 OUTPUT_DIR="${OUTPUT_DIR:-dist}"
+if [[ "$OUTPUT_DIR" =~ \.\. ]]; then
+  echo "[error] OUTPUT_DIR must not contain .." >&2; exit 1
+fi
 BUILD_CMD="${BUILD_CMD:-}"
 START_CMD="${START_CMD:-}"
 INSTALL_CMD="${INSTALL_CMD:-}"
@@ -166,7 +175,7 @@ run_build() {
     if [ "$HAS_BUILD" = "yes" ]; then
       echo "[panel] Building..."
       NODE_ENV=production npm run build
-    elif [ "$APP_TYPE" = "custom" ]; then
+    elif [ "$APP_TYPE" = "custom" ] && [ -z "$START_CMD" ]; then
       echo "[error] custom app has no build script and BUILD_CMD is not set" >&2; exit 1
     else
       echo "[panel] No build script found — skipping build."
