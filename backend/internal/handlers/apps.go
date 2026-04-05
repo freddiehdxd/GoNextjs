@@ -922,22 +922,75 @@ func readPanelMeta(appDir string) (services.PanelMeta, error) {
 }
 
 // sanitizeDeployError extracts a meaningful error message from deploy script stderr.
-// It walks backwards through the output looking for the first line that contains
-// a recognisable error keyword, falling back to the last non-trivial line.
+// For npm/pnpm/yarn errors it returns a block of relevant lines; otherwise it
+// walks backwards looking for the first line that contains a recognisable error
+// keyword, falling back to the last non-trivial line.
 func sanitizeDeployError(stderr string) string {
 	if stderr == "" {
 		return "Deploy script failed"
 	}
 
-	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	rawLines := strings.Split(strings.TrimSpace(stderr), "\n")
+
+	// Strip noise lines (blank, path refs to log files, the generic "see log" footer).
+	noisePhrases := []string{
+		"A complete log of this run can be found",
+		"npm notice",
+		"npm warn deprecated",
+		"gyp verb",
+		"gyp info",
+	}
+	isNoise := func(line string) bool {
+		if line == "" {
+			return true
+		}
+		// Lines that are only the "npm error" prefix with nothing meaningful.
+		if line == "npm error" || line == "npm ERR!" {
+			return true
+		}
+		for _, p := range noisePhrases {
+			if strings.Contains(line, p) {
+				return true
+			}
+		}
+		return false
+	}
+
+	var lines []string
+	for _, l := range rawLines {
+		t := strings.TrimSpace(l)
+		if isNoise(t) {
+			continue
+		}
+		lines = append(lines, t)
+	}
+	if len(lines) == 0 {
+		return "Deploy script failed"
+	}
+
+	// npm/pnpm/yarn path: return the tail block of error lines for context.
+	isPackageManagerError := false
+	for _, l := range lines {
+		if strings.HasPrefix(l, "npm error") || strings.HasPrefix(l, "npm ERR!") ||
+			strings.HasPrefix(l, "pnpm ") || strings.HasPrefix(l, "ERR_PNPM_") ||
+			strings.HasPrefix(l, "error Command failed") {
+			isPackageManagerError = true
+			break
+		}
+	}
+	if isPackageManagerError {
+		// Take up to the last 8 meaningful lines.
+		start := 0
+		if len(lines) > 8 {
+			start = len(lines) - 8
+		}
+		return sanitizeLine(strings.Join(lines[start:], "\n"))
+	}
 
 	// Walk backwards and pick the first line that looks like a real error message.
 	errorKeywords := []string{"Error:", "error:", "ERR!", "failed", "Fatal", "FATAL", "Cannot", "Missing", "not found"}
 	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
+		line := lines[i]
 		for _, kw := range errorKeywords {
 			if strings.Contains(line, kw) {
 				return sanitizeLine(line)
@@ -945,12 +998,10 @@ func sanitizeDeployError(stderr string) string {
 		}
 	}
 
-	// Fallback: walk backwards for the first line longer than 3 chars
-	// (skips stray braces, blank lines, etc.)
+	// Fallback: last non-trivial line.
 	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if len(line) > 3 {
-			return sanitizeLine(line)
+		if len(lines[i]) > 3 {
+			return sanitizeLine(lines[i])
 		}
 	}
 
