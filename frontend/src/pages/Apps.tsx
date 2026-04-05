@@ -481,8 +481,11 @@ export default function AppsPage() {
                 onChange={(e) => {
                   let v = e.target.value;
                   if (v && !v.startsWith('/')) v = '/' + v;
-                  v = v.replace(/\/+$/, '') || '/';
                   setForm({ ...form, root_dir: v });
+                }}
+                onBlur={() => {
+                  const v = form.root_dir.replace(/\/+$/, '') || '/';
+                  if (v !== form.root_dir) setForm({ ...form, root_dir: v });
                 }}
               />
               <p className="text-xs text-gray-600 mt-1.5">Subdirectory containing your app (e.g. /web). Use / for repo root.</p>
