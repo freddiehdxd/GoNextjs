@@ -85,6 +85,13 @@ fi
 # ROOT_DIR is "/" (use APP_DIR) or "/subpath" (use APP_DIR/subpath)
 WORK_DIR="${APP_DIR}${ROOT_DIR%/}"
 [ -z "$WORK_DIR" ] && WORK_DIR="$APP_DIR"
+if [ ! -d "${WORK_DIR}" ]; then
+  echo "[error] Root Directory '${ROOT_DIR}' does not exist in the repository." >&2
+  echo "[error] Looked for: ${WORK_DIR}" >&2
+  echo "[error] Top-level contents of repo:" >&2
+  ls -1 "${APP_DIR}" 2>&1 | sed 's/^/[error]   /' >&2
+  exit 1
+fi
 cd "${WORK_DIR}"
 
 # ── Auto-detect app type if not provided ──────────────────────────────────
