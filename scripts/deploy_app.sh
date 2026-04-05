@@ -143,7 +143,7 @@ EOF
 if [ "$APP_TYPE" != "static" ]; then
   if [ -n "$INSTALL_CMD" ]; then
     echo "[panel] Running custom install: ${INSTALL_CMD}"
-    eval "$INSTALL_CMD"
+    ( cd "${WORK_DIR}" && eval "$INSTALL_CMD" )
   elif [ -f "pnpm-lock.yaml" ]; then
     if ! command -v pnpm &>/dev/null; then
       echo "[error] pnpm-lock.yaml found but pnpm is not installed. Run: npm install -g pnpm" >&2; exit 1
@@ -173,7 +173,7 @@ fi
 run_build() {
   if [ -n "$BUILD_CMD" ]; then
     echo "[panel] Running custom build: ${BUILD_CMD}"
-    NODE_ENV=production eval "$BUILD_CMD"
+    ( cd "${WORK_DIR}" && NODE_ENV=production eval "$BUILD_CMD" )
   elif [ "$APP_TYPE" = "static" ]; then
     echo "[panel] Static app — no build step."
     return
