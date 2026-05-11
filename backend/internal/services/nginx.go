@@ -4,9 +4,42 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"panel-backend/internal/models"
 )
+
+// upstreamsDir is where per-domain upstream include files live. Each file
+// contains a single `server 127.0.0.1:PORT;` line that the site's upstream
+// block includes. Deploy scripts can rewrite it to support blue/green swaps
+// without touching the panel-managed site config.
+const upstreamsDir = "/etc/nginx/upstreams"
+
+// upstreamName returns an nginx-safe upstream identifier for a domain.
+func upstreamName(domain string) string {
+	r := strings.NewReplacer(".", "_", "-", "_")
+	return "app_" + r.Replace(domain)
+}
+
+// upstreamIncludePath returns the per-domain include file path.
+func upstreamIncludePath(domain string) string {
+	return filepath.Join(upstreamsDir, domain+".conf")
+}
+
+// ensureUpstreamInclude writes the default `server 127.0.0.1:PORT;` include
+// file for a domain, but only if it doesn't already exist. Deploy scripts
+// own the file after first creation.
+func ensureUpstreamInclude(domain string, port int) error {
+	if err := os.MkdirAll(upstreamsDir, 0755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", upstreamsDir, err)
+	}
+	path := upstreamIncludePath(domain)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	content := fmt.Sprintf("server 127.0.0.1:%d;\n", port)
+	return os.WriteFile(path, []byte(content), 0644)
+}
 
 // Nginx manages NGINX configuration files
 type Nginx struct {
@@ -24,10 +57,23 @@ func NewNginx(exec *Executor, availDir, enabledDir string) *Nginx {
 	}
 }
 
-// BuildConfig generates an NGINX server block configuration
+// BuildConfig generates an NGINX server block configuration.
+//
+// The generated config uses a named upstream whose single server entry is
+// loaded from /etc/nginx/upstreams/<domain>.conf. The panel writes a default
+// version of that include file (pointing at 127.0.0.1:<port>) on first
+// generation; deploy scripts can later rewrite it to swap colors for
+// blue/green deploys without touching the panel-managed site config.
 func (n *Nginx) BuildConfig(domain string, port int, ssl bool) string {
+	upstream := upstreamName(domain)
+	include := upstreamIncludePath(domain)
+
 	if ssl {
 		return fmt.Sprintf(`# Managed by Panel -- do not edit manually
+upstream %s {
+    include %s;
+}
+
 server {
     listen 80;
     server_name %s;
@@ -48,7 +94,7 @@ server {
     client_max_body_size 100M;
 
     location / {
-        proxy_pass http://127.0.0.1:%d;
+        proxy_pass http://%s;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -58,10 +104,14 @@ server {
         proxy_set_header X-Forwarded-Proto https;
     }
 }
-`, domain, domain, domain, domain, port)
+`, upstream, include, domain, domain, domain, domain, upstream)
 	}
 
 	return fmt.Sprintf(`# Managed by Panel -- do not edit manually
+upstream %s {
+    include %s;
+}
+
 server {
     listen 80;
     server_name %s;
@@ -69,7 +119,7 @@ server {
     client_max_body_size 100M;
 
     location / {
-        proxy_pass http://127.0.0.1:%d;
+        proxy_pass http://%s;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -79,7 +129,7 @@ server {
         proxy_set_header X-Forwarded-Proto https;
     }
 }
-`, domain, port)
+`, upstream, include, domain, upstream)
 }
 
 // BuildStaticConfig generates an NGINX server block that serves static files from docRoot.
@@ -178,6 +228,13 @@ func (n *Nginx) WriteStaticConfig(domain, docRoot string, ssl bool) error {
 
 // WriteConfig writes NGINX config and creates symlink
 func (n *Nginx) WriteConfig(domain string, port int, ssl bool) error {
+	// Write the upstream include file first so the new config validates on
+	// nginx -t. ensureUpstreamInclude is a no-op if the file already exists,
+	// which preserves whatever a deploy script has written there.
+	if err := ensureUpstreamInclude(domain, port); err != nil {
+		return fmt.Errorf("write upstream include: %w", err)
+	}
+
 	config := n.BuildConfig(domain, port, ssl)
 
 	availPath := filepath.Join(n.availDir, domain)
