@@ -77,12 +77,30 @@ func (h *RedisHandler) Install(w http.ResponseWriter, r *http.Request) {
 	Success(w, map[string]string{"message": "Redis installed and started"})
 }
 
+// databaseCount returns the configured number of Redis databases (falls back to 16)
+func (h *RedisHandler) databaseCount() int {
+	result, err := h.exec.RunBin("redis-cli", "CONFIG", "GET", "databases")
+	if err != nil || result.Code != 0 {
+		return 16
+	}
+	lines := strings.Split(strings.TrimSpace(result.Stdout), "\n")
+	if len(lines) < 2 {
+		return 16
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(lines[1]))
+	if err != nil || n <= 0 {
+		return 16
+	}
+	return n
+}
+
 // FlushDB handles POST /api/redis/flush/{db} — flush a specific Redis database
 func (h *RedisHandler) FlushDB(w http.ResponseWriter, r *http.Request) {
+	dbCount := h.databaseCount()
 	dbParam := chi.URLParam(r, "db")
 	dbNum, err := strconv.Atoi(dbParam)
-	if err != nil || dbNum < 0 || dbNum > 15 {
-		Error(w, http.StatusBadRequest, "Invalid database number (0-15)")
+	if err != nil || dbNum < 0 || dbNum >= dbCount {
+		Error(w, http.StatusBadRequest, fmt.Sprintf("Invalid database number (0-%d)", dbCount-1))
 		return
 	}
 
@@ -125,6 +143,7 @@ func (h *RedisHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		RdbLastSave:        parseInt64(info["rdb_last_save_time"]),
 		RdbChanges:         parseInt64(info["rdb_changes_since_last_save"]),
 		Role:               info["role"],
+		Databases:          h.databaseCount(),
 	}
 
 	// Uptime human readable

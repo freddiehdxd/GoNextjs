@@ -23,6 +23,7 @@ interface RedisStats {
   keyspaceHits: number; keyspaceMisses: number; hitRate: number;
   totalKeys: number; expiringKeys: number; evictedKeys: number;
   rdbLastSave: number; rdbChanges: number; role: string;
+  databases: number;
   keyspaces: RedisKeyspace[];
 }
 
@@ -175,9 +176,9 @@ function HitRateGauge({ hits, misses, rate }: { hits: number; misses: number; ra
 
 /* ---- Active Databases ---- */
 
-function ActiveDatabases({ keyspaces, onFlush }: { keyspaces: RedisKeyspace[]; onFlush: (db: number) => Promise<void> }) {
+function ActiveDatabases({ keyspaces, total, onFlush }: { keyspaces: RedisKeyspace[]; total: number; onFlush: (db: number) => Promise<void> }) {
   const ksMap = new Map(keyspaces.map(ks => [ks.db, ks]));
-  const allDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
+  const allDbs = Array.from({ length: total }, (_, i) => `db${i}`);
   const activeCount = keyspaces.length;
   const [confirmDb, setConfirmDb] = useState<string | null>(null);
   const [flushing, setFlushing] = useState<string | null>(null);
@@ -200,7 +201,7 @@ function ActiveDatabases({ keyspaces, onFlush }: { keyspaces: RedisKeyspace[]; o
           style={{ background: activeCount > 0 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.05)',
                    color: activeCount > 0 ? '#10b981' : '#666',
                    border: `1px solid ${activeCount > 0 ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.06)'}` }}>
-          {activeCount} / 16 active
+          {activeCount} / {total} active
         </span>
       </div>
       <div className="grid grid-cols-4 gap-2">
@@ -419,7 +420,7 @@ export default function RedisPage() {
               </div>
 
               {/* Active Databases */}
-              <ActiveDatabases keyspaces={rs.keyspaces} onFlush={flushDb} />
+              <ActiveDatabases keyspaces={rs.keyspaces} total={rs.databases || 16} onFlush={flushDb} />
 
               {/* Persistence info */}
               <div className="card p-4" style={{ background: 'rgba(255,255,255,0.02)' }}>
