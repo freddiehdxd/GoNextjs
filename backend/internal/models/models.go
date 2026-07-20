@@ -424,6 +424,7 @@ type RedisStats struct {
 	RdbLastSave    int64   `json:"rdbLastSave"` // unix timestamp
 	RdbChanges     int64   `json:"rdbChanges"`
 	Role           string  `json:"role"` // master/slave
+	Databases      int     `json:"databases"` // configured database count
 	Keyspaces      []RedisKeyspace `json:"keyspaces"`
 }
 
