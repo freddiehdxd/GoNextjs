@@ -140,8 +140,10 @@ func findDomainsFor(availDir string, port int, dirPath string) []string {
 		return []string{}
 	}
 	proxyNeedle := ""
+	upstreamNeedle := ""
 	if port > 0 {
 		proxyNeedle = fmt.Sprintf("proxy_pass http://127.0.0.1:%d;", port)
+		upstreamNeedle = fmt.Sprintf("server 127.0.0.1:%d;", port)
 	}
 	cleanDir := filepath.Clean(dirPath)
 	matches := []string{}
@@ -156,6 +158,26 @@ func findDomainsFor(availDir string, port int, dirPath string) []string {
 		content := string(data)
 		if proxyNeedle != "" && strings.Contains(content, proxyNeedle) {
 			matches = append(matches, e.Name())
+			continue
+		}
+		matched := false
+		if upstreamNeedle != "" {
+			for _, line := range strings.Split(content, "\n") {
+				line = strings.TrimSpace(line)
+				if !strings.HasPrefix(line, "include ") {
+					continue
+				}
+				includePath := strings.TrimSpace(strings.TrimPrefix(line, "include "))
+				includePath = strings.TrimSuffix(includePath, ";")
+				includePath = strings.Trim(includePath, "\"")
+				if incData, err := os.ReadFile(includePath); err == nil && strings.Contains(string(incData), upstreamNeedle) {
+					matches = append(matches, e.Name())
+					matched = true
+					break
+				}
+			}
+		}
+		if matched {
 			continue
 		}
 		for _, line := range strings.Split(content, "\n") {
