@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
 	"panel-backend/internal/config"
 	"panel-backend/internal/models"
@@ -25,6 +26,41 @@ var (
 	repoURLPattern = regexp.MustCompile(`^(https?://|git@)`)
 	branchPattern  = regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)
 )
+
+// appColumns is the canonical column list for selecting an App. Every query
+// that returns an App must select exactly these columns in this order and
+// scan with scanAppRow.
+const appColumns = "id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd, created_at, updated_at"
+
+// scanAppRow scans one row selected with appColumns into an App.
+// pgx.Rows also satisfies pgx.Row, so this works inside rows.Next() loops.
+func scanAppRow(row pgx.Row) (*models.App, error) {
+	var app models.App
+	var envJSON []byte
+	if err := row.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
+		&envJSON, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts,
+		&app.AppType, &app.BuildCmd, &app.StartCmd, &app.RootDir, &app.OutputDir, &app.InstallCmd,
+		&app.CreatedAt, &app.UpdatedAt); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(envJSON, &app.EnvVars); err != nil || app.EnvVars == nil {
+		app.EnvVars = make(map[string]string)
+	}
+	app.Domains = make([]models.Domain, 0)
+	return &app, nil
+}
+
+// validateOutputDir rejects output directories that would escape the app's
+// working directory or point at the working directory itself.
+func validateOutputDir(s string) error {
+	if s == "" || s == "." || s == "./" || s == "/" {
+		return fmt.Errorf("output_dir must be a subdirectory such as dist")
+	}
+	if strings.Contains(s, "..") {
+		return fmt.Errorf("output_dir must not contain ..")
+	}
+	return nil
+}
 
 // AppsHandler handles application routes
 type AppsHandler struct {
@@ -46,8 +82,7 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	rows, err := h.db.Query(ctx,
-		"SELECT id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd, created_at, updated_at FROM apps ORDER BY created_at DESC")
+	rows, err := h.db.Query(ctx, "SELECT "+appColumns+" FROM apps ORDER BY created_at DESC")
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to fetch apps")
 		return
@@ -56,20 +91,12 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	apps := make([]models.App, 0)
 	for rows.Next() {
-		var app models.App
-		var envJSON []byte
-		if err := rows.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-			&envJSON, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts,
-			&app.AppType, &app.BuildCmd, &app.StartCmd, &app.RootDir, &app.OutputDir, &app.InstallCmd,
-			&app.CreatedAt, &app.UpdatedAt); err != nil {
+		app, err := scanAppRow(rows)
+		if err != nil {
 			Error(w, http.StatusInternalServerError, "Failed to scan app")
 			return
 		}
-		if err := json.Unmarshal(envJSON, &app.EnvVars); err != nil {
-			app.EnvVars = make(map[string]string)
-		}
-		app.Domains = make([]models.Domain, 0)
-		apps = append(apps, app)
+		apps = append(apps, *app)
 	}
 
 	// Load all domains and attach to apps
@@ -205,6 +232,10 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "root_dir must start with / and must not contain ..")
 		return
 	}
+	if err := validateOutputDir(body.OutputDir); err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	ctx := r.Context()
 
@@ -274,24 +305,17 @@ func (h *AppsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Insert into database
 	envJSON, _ := json.Marshal(body.EnvVars)
-	var app models.App
-	var envBytes []byte
-	err = h.db.QueryRow(ctx,
+	app, err := scanAppRow(h.db.QueryRow(ctx,
 		`INSERT INTO apps (name, repo_url, branch, port, env_vars, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		 RETURNING id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd, created_at, updated_at`,
+		 RETURNING `+appColumns,
 		body.Name, body.RepoURL, body.Branch, port, envJSON,
 		resolvedType, body.BuildCmd, body.StartCmd, resolvedRoot, body.OutputDir, body.InstallCmd,
-	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&envBytes, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts,
-		&app.AppType, &app.BuildCmd, &app.StartCmd, &app.RootDir, &app.OutputDir, &app.InstallCmd,
-		&app.CreatedAt, &app.UpdatedAt)
+	))
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to save app")
 		return
 	}
-	json.Unmarshal(envBytes, &app.EnvVars)
-	app.Domains = make([]models.Domain, 0)
 
 	SuccessCreated(w, app)
 }
@@ -526,22 +550,14 @@ func (h *AppsHandler) UpdateEnv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	envJSON, _ := json.Marshal(body.EnvVars)
-	var app models.App
-	var envBytes []byte
-	err = h.db.QueryRow(ctx,
-		`UPDATE apps SET env_vars = $1, updated_at = NOW() WHERE name = $2
-     RETURNING id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd, created_at, updated_at`,
+	app, err := scanAppRow(h.db.QueryRow(ctx,
+		`UPDATE apps SET env_vars = $1, updated_at = NOW() WHERE name = $2 RETURNING `+appColumns,
 		envJSON, name,
-	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&envBytes, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts,
-		&app.AppType, &app.BuildCmd, &app.StartCmd, &app.RootDir, &app.OutputDir, &app.InstallCmd,
-		&app.CreatedAt, &app.UpdatedAt)
+	))
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update env vars")
 		return
 	}
-	json.Unmarshal(envBytes, &app.EnvVars)
-	app.Domains = make([]models.Domain, 0)
 
 	// Write .env file to app directory
 	if err := services.WriteEnvFile(h.cfg.AppsDir, name, body.EnvVars); err != nil {
@@ -674,20 +690,10 @@ func (h *AppsHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 
 // getAppByName fetches an app from the database by name
 func (h *AppsHandler) getAppByName(ctx context.Context, name string) (*models.App, error) {
-	var app models.App
-	var envJSON []byte
-	err := h.db.QueryRow(ctx,
-		"SELECT id, name, repo_url, branch, port, env_vars, webhook_secret, max_memory, max_restarts, app_type, build_cmd, start_cmd, root_dir, output_dir, install_cmd, created_at, updated_at FROM apps WHERE name = $1",
-		name,
-	).Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Port,
-		&envJSON, &app.WebhookSecret, &app.MaxMemory, &app.MaxRestarts,
-		&app.AppType, &app.BuildCmd, &app.StartCmd, &app.RootDir, &app.OutputDir, &app.InstallCmd,
-		&app.CreatedAt, &app.UpdatedAt)
+	app, err := scanAppRow(h.db.QueryRow(ctx,
+		"SELECT "+appColumns+" FROM apps WHERE name = $1", name))
 	if err != nil {
 		return nil, err
-	}
-	if err := json.Unmarshal(envJSON, &app.EnvVars); err != nil {
-		app.EnvVars = make(map[string]string)
 	}
 
 	// Load domains
@@ -704,7 +710,7 @@ func (h *AppsHandler) getAppByName(ctx context.Context, name string) (*models.Ap
 		}
 	}
 
-	return &app, nil
+	return app, nil
 }
 
 // syncPanelMeta reads .panel_meta written by the deploy script and updates the DB if type changed.
