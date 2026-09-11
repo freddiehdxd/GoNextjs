@@ -146,3 +146,70 @@ func TestDetectPort(t *testing.T) {
 		}
 	})
 }
+
+func TestFindDomainsFor(t *testing.T) {
+	avail := t.TempDir()
+	appDir := filepath.Join(string(filepath.Separator)+"var", "www", "apps", "site")
+	writeFile(t, filepath.Join(avail, "proxy.example.com"),
+		"server {\n    location / {\n        proxy_pass http://127.0.0.1:3004;\n    }\n}\n")
+	writeFile(t, filepath.Join(avail, "static.example.com"),
+		"server {\n    root "+filepath.Join(appDir, "dist")+";\n}\n")
+	writeFile(t, filepath.Join(avail, "exact.example.com"),
+		"server {\n    root "+appDir+";\n}\n")
+	writeFile(t, filepath.Join(avail, "other.example.com"),
+		"server {\n    proxy_pass http://127.0.0.1:3005;\n    root /var/www/apps/site2/dist;\n}\n")
+	mkdir(t, filepath.Join(avail, "subdir")) // directories are ignored
+
+	got := findDomainsFor(avail, 3004, appDir)
+	want := []string{"exact.example.com", "proxy.example.com", "static.example.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+
+	// port 0 must not match anything by port
+	got = findDomainsFor(avail, 0, filepath.Join(appDir, "nomatch"))
+	if len(got) != 0 {
+		t.Errorf("got %v, want none", got)
+	}
+
+	// missing dir → empty, no panic
+	if got := findDomainsFor(filepath.Join(avail, "missing"), 3004, appDir); len(got) != 0 {
+		t.Errorf("got %v, want none", got)
+	}
+}
+
+func TestChoosePort(t *testing.T) {
+	used := map[int]bool{3001: true, 3002: true, 3004: true}
+	tests := []struct {
+		name      string
+		requested int
+		detected  int
+		want      int
+		wantErr   bool
+	}{
+		{"requested free", 3010, 0, 3010, false},
+		{"requested taken", 3002, 0, 0, true},
+		{"requested below range", 3000, 0, 0, true},
+		{"requested above range", 4000, 0, 0, true},
+		{"detected free", 0, 3007, 3007, false},
+		{"detected taken falls back to first free", 0, 3004, 3003, false},
+		{"detected out of range falls back", 0, 8080, 3003, false},
+		{"nothing given", 0, 0, 3003, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := choosePort(tt.requested, tt.detected, used, 3001, 3999)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("got %d, want %d", got, tt.want)
+			}
+		})
+	}
+	t.Run("range exhausted", func(t *testing.T) {
+		if _, err := choosePort(0, 0, map[int]bool{3001: true, 3002: true}, 3001, 3002); err == nil {
+			t.Error("expected error when no free port")
+		}
+	})
+}

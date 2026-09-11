@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -129,4 +130,72 @@ func detectPort(dir string) int {
 		}
 	}
 	return 0
+}
+
+// findDomainsFor returns the names of NGINX site files in availDir that proxy
+// to port (when port > 0) or serve a root at or under dirPath.
+func findDomainsFor(availDir string, port int, dirPath string) []string {
+	entries, err := os.ReadDir(availDir)
+	if err != nil {
+		return []string{}
+	}
+	proxyNeedle := ""
+	if port > 0 {
+		proxyNeedle = fmt.Sprintf("proxy_pass http://127.0.0.1:%d;", port)
+	}
+	cleanDir := filepath.Clean(dirPath)
+	matches := []string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(availDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		if proxyNeedle != "" && strings.Contains(content, proxyNeedle) {
+			matches = append(matches, e.Name())
+			continue
+		}
+		for _, line := range strings.Split(content, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "root ") {
+				continue
+			}
+			root := filepath.Clean(strings.TrimSuffix(strings.TrimSpace(strings.TrimPrefix(line, "root ")), ";"))
+			if root == cleanDir || strings.HasPrefix(root, cleanDir+string(filepath.Separator)) {
+				matches = append(matches, e.Name())
+				break
+			}
+		}
+	}
+	sort.Strings(matches)
+	return matches
+}
+
+// choosePort picks the port for an imported app.
+//   - requested != 0: must be in range and unused, else error.
+//   - else detected, when in range and unused.
+//   - else the first free port in range.
+func choosePort(requested, detected int, used map[int]bool, start, end int) (int, error) {
+	inRange := func(p int) bool { return p >= start && p <= end }
+	if requested != 0 {
+		if !inRange(requested) {
+			return 0, fmt.Errorf("port %d is outside the allowed range %d-%d", requested, start, end)
+		}
+		if used[requested] {
+			return 0, fmt.Errorf("port %d is already used by another app", requested)
+		}
+		return requested, nil
+	}
+	if detected != 0 && inRange(detected) && !used[detected] {
+		return detected, nil
+	}
+	for p := start; p <= end; p++ {
+		if !used[p] {
+			return p, nil
+		}
+	}
+	return 0, fmt.Errorf("no free ports available in range %d-%d", start, end)
 }

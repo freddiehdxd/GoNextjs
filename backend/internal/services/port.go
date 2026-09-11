@@ -7,7 +7,7 @@ import (
 
 // PortAllocator manages port allocation for apps
 type PortAllocator struct {
-	db       *DB
+	db        *DB
 	portStart int
 	portEnd   int
 }
@@ -15,36 +15,41 @@ type PortAllocator struct {
 // NewPortAllocator creates a new port allocator
 func NewPortAllocator(db *DB, portStart, portEnd int) *PortAllocator {
 	return &PortAllocator{
-		db:       db,
+		db:        db,
 		portStart: portStart,
 		portEnd:   portEnd,
 	}
 }
 
-// Allocate finds and returns the next free port
-func (pa *PortAllocator) Allocate(ctx context.Context) (int, error) {
-	// Get all used ports
-	rows, err := pa.db.Query(ctx, "SELECT port FROM apps ORDER BY port")
+// UsedPorts returns the set of ports currently assigned to apps.
+func (pa *PortAllocator) UsedPorts(ctx context.Context) (map[int]bool, error) {
+	rows, err := pa.db.Query(ctx, "SELECT port FROM apps")
 	if err != nil {
-		return 0, fmt.Errorf("query ports: %w", err)
+		return nil, fmt.Errorf("query ports: %w", err)
 	}
 	defer rows.Close()
 
-	usedPorts := make(map[int]bool)
+	used := make(map[int]bool)
 	for rows.Next() {
 		var port int
 		if err := rows.Scan(&port); err != nil {
-			return 0, fmt.Errorf("scan port: %w", err)
+			return nil, fmt.Errorf("scan port: %w", err)
 		}
-		usedPorts[port] = true
+		used[port] = true
 	}
+	return used, nil
+}
 
-	// Find first free port in range
+// Allocate finds and returns the next free port
+func (pa *PortAllocator) Allocate(ctx context.Context) (int, error) {
+	usedPorts, err := pa.UsedPorts(ctx)
+	if err != nil {
+		return 0, err
+	}
 	for port := pa.portStart; port <= pa.portEnd; port++ {
 		if !usedPorts[port] {
 			return port, nil
 		}
 	}
-
 	return 0, fmt.Errorf("no free ports available in range %d-%d", pa.portStart, pa.portEnd)
 }
