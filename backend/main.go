@@ -62,6 +62,7 @@ func main() {
 	auditHandler := handlers.NewAuditHandler(db)
 	alertsHandler := handlers.NewAlertsHandler(db, pm2)
 	backupHandler := handlers.NewBackupHandler(db, exec, cfg)
+	scanHandler := handlers.NewScanHandler(db, pm2, portAlloc, cfg)
 
 	// Cron scheduler (starts background goroutine)
 	cronScheduler := services.NewCronScheduler(db, pm2, exec, cfg.AppsDir)
@@ -138,6 +139,11 @@ func main() {
 			r.Post("/apps/{name}/deploy-zip", appsHandler.UploadProject)
 			r.Put("/apps/{name}/settings", appsHandler.UpdateSettings)
 			r.Post("/apps/{name}/webhook", appsHandler.GenerateWebhook)
+
+			// Apps directory scan / import (static segments win over {name} in chi)
+			r.Get("/apps/scan", scanHandler.Scan)
+			r.Post("/apps/import", scanHandler.Import)
+			r.Delete("/apps/scan/{name}", scanHandler.DeleteDir)
 
 			// Domains
 			r.Post("/domains", domainsHandler.Add)

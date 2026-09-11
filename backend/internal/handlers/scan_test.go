@@ -1,10 +1,15 @@
 package handlers
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func mkdir(t *testing.T, path string) {
@@ -251,4 +256,46 @@ func TestChoosePort(t *testing.T) {
 			t.Error("expected error when no free port")
 		}
 	})
+}
+
+// TestScanRouteNotShadowed guards the route layout in main.go: /apps/scan must
+// hit the scan handler, not /apps/{name}.
+func TestScanRouteNotShadowed(t *testing.T) {
+	r := chi.NewRouter()
+	hit := ""
+	r.Get("/apps/{name}", func(w http.ResponseWriter, r *http.Request) { hit = "app:" + chi.URLParam(r, "name") })
+	r.Get("/apps/scan", func(w http.ResponseWriter, r *http.Request) { hit = "scan" })
+	r.Delete("/apps/scan/{name}", func(w http.ResponseWriter, r *http.Request) { hit = "del:" + chi.URLParam(r, "name") })
+
+	req := httptest.NewRequest("GET", "/apps/scan", nil)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+	if hit != "scan" {
+		t.Errorf("GET /apps/scan hit %q, want scan", hit)
+	}
+	req = httptest.NewRequest("GET", "/apps/myapp", nil)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+	if hit != "app:myapp" {
+		t.Errorf("GET /apps/myapp hit %q, want app:myapp", hit)
+	}
+	req = httptest.NewRequest("DELETE", "/apps/scan/old", nil)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+	if hit != "del:old" {
+		t.Errorf("DELETE /apps/scan/old hit %q, want del:old", hit)
+	}
+}
+
+func TestScanResultJSONShape(t *testing.T) {
+	res := ScanResult{
+		AppsDir:   "/var/www/apps",
+		Unmanaged: []UnmanagedDir{},
+		Orphaned:  []OrphanedApp{},
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"apps_dir":"/var/www/apps","unmanaged":[],"orphaned":[]}`
+	if string(data) != want {
+		t.Errorf("got %s\nwant %s", data, want)
+	}
 }
