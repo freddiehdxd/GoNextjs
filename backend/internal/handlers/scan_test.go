@@ -22,6 +22,15 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func hasString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 func TestListUnmanagedDirs(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "alpha"))
@@ -187,13 +196,14 @@ func TestFindDomainsFor(t *testing.T) {
 
 		// should match when include contains the port
 		got := findDomainsFor(avail, 3004, appDir)
-		if !reflect.DeepEqual(got, []string{"exact.example.com", "proxy.example.com", "static.example.com", "upstream.example.com"}) {
-			t.Errorf("got %v, want upstream.example.com included", got)
+		want := []string{"exact.example.com", "proxy.example.com", "static.example.com", "upstream.example.com"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 
 		// should not match different port
 		got = findDomainsFor(avail, 3005, appDir)
-		if reflect.DeepEqual(got, []string{"exact.example.com", "proxy.example.com", "static.example.com", "upstream.example.com"}) {
+		if hasString(got, "upstream.example.com") {
 			t.Errorf("got %v, should not include upstream.example.com for port 3005", got)
 		}
 
@@ -201,7 +211,7 @@ func TestFindDomainsFor(t *testing.T) {
 		writeFile(t, filepath.Join(avail, "broken.example.com"),
 			"upstream site_upstream {\n    include /nonexistent/path/upstream.conf;\n}\nserver {\n    location / { proxy_pass http://site_upstream; }\n}\n")
 		got = findDomainsFor(avail, 3004, appDir)
-		if reflect.DeepEqual(got, []string{"exact.example.com", "proxy.example.com", "static.example.com", "upstream.example.com", "broken.example.com"}) {
+		if hasString(got, "broken.example.com") {
 			t.Errorf("got %v, should not match broken.example.com with missing include", got)
 		}
 	})
