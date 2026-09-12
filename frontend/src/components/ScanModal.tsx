@@ -171,7 +171,7 @@ function UnmanagedRow({ dir, onChanged }: { dir: UnmanagedDir; onChanged: (warn?
           expected={dir.name}
           buttonLabel="Delete directory"
           onConfirm={async () => {
-            const res = await api.delete(`/apps/scan/${dir.name}`);
+            const res = await api.delete(`/apps/scan/${encodeURIComponent(dir.name)}`);
             if (!res.success) return res.error ?? 'Delete failed';
             setMode('idle'); onChanged(); return '';
           }}
@@ -280,7 +280,7 @@ function OrphanRow({ app, onChanged }: { app: OrphanedApp; onChanged: () => void
           expected={app.name}
           buttonLabel="Remove record"
           onConfirm={async () => {
-            const res = await api.post(`/apps/${app.name}/action`, { action: 'delete' });
+            const res = await api.post(`/apps/${encodeURIComponent(app.name)}/action`, { action: 'delete' });
             if (!res.success) return res.error ?? 'Remove failed';
             setConfirming(false); onChanged(); return '';
           }}
