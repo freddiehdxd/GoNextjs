@@ -3,17 +3,19 @@ node_modules/
 
 # Build output — Go
 backend/panel-server
+backend/panel-server.exe
+backend/panel-server.exe~
+*.exe
+*.exe~
 
 # Build output — Vite
 frontend/dist/
+frontend/tsconfig.tsbuildinfo
 
 # Build output — legacy Next.js
 frontend/.next/
 frontend/out/
 backend/dist/
-
-# Go sum (resolved on build)
-backend/go.sum
 
 # Environment files — NEVER commit these
 .env
@@ -22,6 +24,7 @@ backend/go.sum
 .env.*.local
 backend/.env
 frontend/.env.local
+cookies.txt
 
 # Logs
 *.log
@@ -38,6 +41,7 @@ Thumbs.db
 
 # Claude
 .claude/
+.superpowers/
 
 # Git worktrees
 .worktrees/
