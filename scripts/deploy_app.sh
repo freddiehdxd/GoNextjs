@@ -25,6 +25,9 @@ OUTPUT_DIR="${OUTPUT_DIR:-dist}"
 if [[ "$OUTPUT_DIR" =~ \.\. ]]; then
   echo "[error] OUTPUT_DIR must not contain .." >&2; exit 1
 fi
+if [[ "$OUTPUT_DIR" == "." || "$OUTPUT_DIR" == "./" || "$OUTPUT_DIR" == "/" || -z "$OUTPUT_DIR" ]]; then
+  echo "[error] OUTPUT_DIR must be a subdirectory such as dist" >&2; exit 1
+fi
 BUILD_CMD="${BUILD_CMD:-}"
 START_CMD="${START_CMD:-}"
 INSTALL_CMD="${INSTALL_CMD:-}"
@@ -162,7 +165,7 @@ if [ "$APP_TYPE" != "static" ]; then
 fi
 
 # ── Cleanup previous build output ─────────────────────────────────────────
-if [ "$APP_TYPE" = "vite" ] || [ "$APP_TYPE" = "static" ] || { [ "$APP_TYPE" = "custom" ] && [ -z "$START_CMD" ]; }; then
+if [ "$APP_TYPE" = "vite" ] || { [ "$APP_TYPE" = "custom" ] && [ -z "$START_CMD" ]; }; then
   FULL_OUTPUT="${WORK_DIR}/${OUTPUT_DIR}"
   if [ -n "$OUTPUT_DIR" ] && [ "$OUTPUT_DIR" != "/" ] && [ -d "$FULL_OUTPUT" ]; then
     find "$FULL_OUTPUT" -mindepth 1 -delete 2>/dev/null || true

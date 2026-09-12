@@ -22,6 +22,9 @@ OUTPUT_DIR="${OUTPUT_DIR:-dist}"
 if [[ "$OUTPUT_DIR" =~ \.\. ]]; then
   echo "[error] OUTPUT_DIR must not contain .." >&2; exit 1
 fi
+if [[ "$OUTPUT_DIR" == "." || "$OUTPUT_DIR" == "./" || "$OUTPUT_DIR" == "/" || -z "$OUTPUT_DIR" ]]; then
+  echo "[error] OUTPUT_DIR must be a subdirectory such as dist" >&2; exit 1
+fi
 BUILD_CMD="${BUILD_CMD:-}"
 START_CMD="${START_CMD:-}"
 INSTALL_CMD="${INSTALL_CMD:-}"
@@ -45,7 +48,14 @@ WORK_DIR="${APP_DIR}${ROOT_DIR%/}"
 [ -z "$WORK_DIR" ] && WORK_DIR="$APP_DIR"
 
 # Handle nested zip: if WORK_DIR doesn't exist but there's one subdir with package.json, move it
-if [ ! -d "$WORK_DIR" ] || { [ "$ROOT_DIR" = "/" ] && [ ! -f "${WORK_DIR}/package.json" ]; }; then
+if [ "$ROOT_DIR" != "/" ] && [ ! -d "$WORK_DIR" ]; then
+  echo "[error] Root Directory '${ROOT_DIR}' does not exist in the uploaded project." >&2
+  echo "[error] Looked for: ${WORK_DIR}" >&2
+  echo "[error] Top-level contents:" >&2
+  ls -1 "${APP_DIR}" 2>&1 | sed 's/^/[error]   /' >&2
+  exit 1
+fi
+if [ "$ROOT_DIR" = "/" ] && [ ! -f "${WORK_DIR}/package.json" ]; then
   cd "${APP_DIR}"
   SUBDIRS_WITH_PKG=()
   for d in */; do
@@ -79,7 +89,7 @@ echo "[setup] Setting up ${APP_NAME} (type: ${RESOLVED_TYPE}) on port ${PORT}"
 if [ "$RESOLVED_TYPE" != "static" ]; then
   if [ -n "$INSTALL_CMD" ]; then
     echo "[setup] Running custom install: ${INSTALL_CMD}"
-    eval "$INSTALL_CMD"
+    ( cd "${WORK_DIR}" && eval "$INSTALL_CMD" )
   elif [ -f "pnpm-lock.yaml" ]; then
     command -v pnpm &>/dev/null || { echo "[error] pnpm not installed" >&2; exit 1; }
     pnpm install
@@ -102,7 +112,7 @@ if [ "$RESOLVED_TYPE" = "custom" ] && [ -z "$START_CMD" ]; then
   IS_STATIC=true
 fi
 
-if [ "$IS_STATIC" = "true" ]; then
+if [ "$IS_STATIC" = "true" ] && [ "$RESOLVED_TYPE" != "static" ]; then
   FULL_OUTPUT="${WORK_DIR}/${OUTPUT_DIR}"
   if [ -n "$OUTPUT_DIR" ] && [ "$OUTPUT_DIR" != "/" ] && [ -d "$FULL_OUTPUT" ]; then
     find "$FULL_OUTPUT" -mindepth 1 -delete 2>/dev/null || true
@@ -112,7 +122,7 @@ fi
 # ── Build ──────────────────────────────────────────────────────────────────
 if [ -n "$BUILD_CMD" ]; then
   echo "[setup] Running custom build: ${BUILD_CMD}"
-  NODE_ENV=production eval "$BUILD_CMD"
+  ( cd "${WORK_DIR}" && NODE_ENV=production eval "$BUILD_CMD" )
 elif [ "$RESOLVED_TYPE" = "static" ]; then
   echo "[setup] Static app — no build step."
 else
