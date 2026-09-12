@@ -24,12 +24,14 @@ const sslSettings = `    ssl_protocols TLSv1.2 TLSv1.3;
 
     add_header Strict-Transport-Security "max-age=63072000" always;
     add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 `
 
 // securityHeaders is repeated inside location blocks that set their own
 // add_header, because NGINX does not inherit add_header into such blocks.
 const securityHeaders = `        add_header Strict-Transport-Security "max-age=63072000" always;
         add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 `
 
 // upstreamName returns an nginx-safe upstream identifier for a domain.
@@ -273,10 +275,26 @@ func (n *Nginx) WriteConfig(domain string, port int, ssl bool) error {
 	return nil
 }
 
-// RemoveConfig removes NGINX config files for a domain
+// RemoveConfig removes NGINX config files for a domain. It also cleans up
+// mixed-case leftovers from before domains were lowercased (migration 6):
+// any entry in either directory whose name matches domain case-insensitively
+// but isn't the exact (lowercase) filename is removed too.
 func (n *Nginx) RemoveConfig(domain string) {
 	os.Remove(filepath.Join(n.enabledDir, domain))
 	os.Remove(filepath.Join(n.availDir, domain))
+
+	for _, dir := range []string{n.enabledDir, n.availDir} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if name != domain && strings.EqualFold(name, domain) {
+				os.Remove(filepath.Join(dir, name))
+			}
+		}
+	}
 }
 
 // TestAndReload tests the NGINX configuration and reloads

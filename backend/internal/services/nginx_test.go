@@ -1,6 +1,8 @@
 package services
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -51,6 +53,7 @@ func TestBuildConfigTemplates(t *testing.T) {
 					"ssl_session_cache shared:PanelSSL:10m;",
 					`add_header Strict-Transport-Security "max-age=63072000" always;`,
 					"add_header X-Content-Type-Options nosniff always;",
+					`add_header Referrer-Policy "strict-origin-when-cross-origin" always;`,
 				} {
 					if !strings.Contains(c.cfg, w) {
 						t.Errorf("ssl template missing %q", w)
@@ -62,7 +65,36 @@ func TestBuildConfigTemplates(t *testing.T) {
 				if strings.Count(c.cfg, `add_header Strict-Transport-Security "max-age=63072000" always;`) < 3 {
 					t.Errorf("HSTS must be repeated in each add_header location block")
 				}
+				if strings.Count(c.cfg, "Referrer-Policy") < 3 {
+					t.Errorf("Referrer-Policy must be repeated in each add_header location block")
+				}
 			}
 		})
+	}
+}
+
+func TestRemoveConfig_RemovesMixedCaseLeftovers(t *testing.T) {
+	avail := t.TempDir()
+	enabled := t.TempDir()
+
+	for _, dir := range []string{avail, enabled} {
+		if err := os.WriteFile(filepath.Join(dir, "Example.COM"), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "other.com"), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n := NewNginx(nil, avail, enabled)
+	n.RemoveConfig("example.com")
+
+	for _, dir := range []string{avail, enabled} {
+		if _, err := os.Stat(filepath.Join(dir, "Example.COM")); !os.IsNotExist(err) {
+			t.Errorf("expected Example.COM to be removed from %s", dir)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "other.com")); err != nil {
+			t.Errorf("expected other.com to survive in %s: %v", dir, err)
+		}
 	}
 }
