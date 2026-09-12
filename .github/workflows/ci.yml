@@ -15,11 +15,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
+          go-version: stable
           cache-dependency-path: backend/go.sum
       - run: go vet ./...
       - run: go test ./... -count=1
-      - run: go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4 && govulncheck ./...
 
   frontend:
     runs-on: ubuntu-latest
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get install -y shellcheck
-      - run: bash -n scripts/*.sh
+      - run: |
+          for f in scripts/*.sh; do bash -n "$f" || exit 1; done
       - run: shellcheck -S warning scripts/*.sh
         continue-on-error: true
