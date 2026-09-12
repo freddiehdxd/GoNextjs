@@ -29,7 +29,21 @@ type HealthResult struct {
 	ResponseMs    int       `json:"response_ms"`
 	LastCheck     time.Time `json:"last_check"`
 	FailCount     int       `json:"fail_count"`
+	Static        bool      `json:"static"`
 	Error         string    `json:"error,omitempty"`
+}
+
+// classifyApp decides whether an app needs an HTTP probe. When it does not,
+// the returned result is recorded as-is (static apps are healthy by
+// definition; process apps that PM2 does not report online are unhealthy).
+func classifyApp(appType, startCmd, pm2Status string) (bool, *HealthResult) {
+	if services.IsStaticType(appType, startCmd) {
+		return false, &HealthResult{Healthy: true, Static: true}
+	}
+	if pm2Status != "online" {
+		return false, &HealthResult{Healthy: false, Error: "not running (PM2 status: " + pm2Status + ")"}
+	}
+	return true, nil
 }
 
 // NewHealthChecker creates a new health checker that runs every 60 seconds
@@ -73,20 +87,22 @@ func (h *HealthChecker) checkAll() {
 	defer cancel()
 
 	// Get all apps with their ports
-	rows, err := h.db.Query(ctx, "SELECT name, port FROM apps")
+	rows, err := h.db.Query(ctx, "SELECT name, port, app_type, start_cmd FROM apps")
 	if err != nil {
 		return
 	}
 	defer rows.Close()
 
 	type appInfo struct {
-		name string
-		port int
+		name     string
+		port     int
+		appType  string
+		startCmd string
 	}
 	var apps []appInfo
 	for rows.Next() {
 		var a appInfo
-		rows.Scan(&a.name, &a.port)
+		rows.Scan(&a.name, &a.port, &a.appType, &a.startCmd)
 		apps = append(apps, a)
 	}
 
@@ -99,20 +115,15 @@ func (h *HealthChecker) checkAll() {
 
 	// Check each running app
 	for _, app := range apps {
-		status := pm2Status[app.name]
-		if status != "online" {
-			// Not running, skip health check but record status
+		probe, res := classifyApp(app.appType, app.startCmd, pm2Status[app.name])
+		if !probe {
+			res.AppName = app.name
+			res.LastCheck = time.Now()
 			h.mu.Lock()
-			h.results[app.name] = &HealthResult{
-				AppName:   app.name,
-				Healthy:   false,
-				LastCheck: time.Now(),
-				Error:     "not running (PM2 status: " + status + ")",
-			}
+			h.results[app.name] = res
 			h.mu.Unlock()
 			continue
 		}
-
 		h.checkApp(app.name, app.port)
 	}
 
