@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+
+	"panel-backend/internal/services"
 )
 
 func mkdir(t *testing.T, path string) {
@@ -297,5 +299,62 @@ func TestScanResultJSONShape(t *testing.T) {
 	want := `{"apps_dir":"/var/www/apps","unmanaged":[],"orphaned":[]}`
 	if string(data) != want {
 		t.Errorf("got %s\nwant %s", data, want)
+	}
+}
+
+func TestResolveImportType(t *testing.T) {
+	t.Run("explicit type and root skip detection", func(t *testing.T) {
+		dir := t.TempDir() // no package.json at all
+		typ, root, err := resolveImportType(dir, "node", "/api")
+		if err != nil || typ != "node" || root != "/api" {
+			t.Errorf("got %q %q %v", typ, root, err)
+		}
+	})
+	t.Run("explicit type defaults root", func(t *testing.T) {
+		typ, root, err := resolveImportType(t.TempDir(), "static", "")
+		if err != nil || typ != "static" || root != "/" {
+			t.Errorf("got %q %q %v", typ, root, err)
+		}
+	})
+	t.Run("invalid type rejected", func(t *testing.T) {
+		if _, _, err := resolveImportType(t.TempDir(), "php", ""); err == nil {
+			t.Error("expected error")
+		}
+	})
+	t.Run("auto detects vite", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "vite.config.ts"), "export default {}")
+		writeFile(t, filepath.Join(dir, "package.json"), `{"devDependencies":{"vite":"^5"}}`)
+		typ, root, err := resolveImportType(dir, "", "")
+		if err != nil || typ != "vite" || root != "/" {
+			t.Errorf("got %q %q %v", typ, root, err)
+		}
+	})
+	t.Run("auto with root hint detects in subdir", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "web", "next.config.js"), "module.exports={}")
+		typ, root, err := resolveImportType(dir, "", "/web")
+		if err != nil || typ != "next" || root != "/web" {
+			t.Errorf("got %q %q %v", typ, root, err)
+		}
+	})
+	t.Run("auto ambiguous surfaces detection error", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "web", "package.json"), `{"scripts":{"build":"x"},"dependencies":{"next":"1"}}`)
+		writeFile(t, filepath.Join(dir, "app", "package.json"), `{"scripts":{"build":"x"},"dependencies":{"next":"1"}}`)
+		if _, _, err := resolveImportType(dir, "", ""); err == nil {
+			t.Error("expected ambiguity error")
+		}
+	})
+}
+
+func TestWritePanelMeta(t *testing.T) {
+	dir := t.TempDir()
+	if err := writePanelMeta(dir, "vite", "/web"); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := services.ReadPanelMeta(dir)
+	if err != nil || meta.AppType != "vite" || meta.RootDir != "/web" {
+		t.Errorf("got %+v %v", meta, err)
 	}
 }

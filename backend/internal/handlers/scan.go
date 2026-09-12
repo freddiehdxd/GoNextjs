@@ -3,6 +3,7 @@ package handlers
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"panel-backend/internal/config"
+	"panel-backend/internal/models"
 	"panel-backend/internal/services"
 )
 
@@ -419,9 +421,157 @@ func (h *ScanHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	Success(w, result)
 }
 
-// Import handles POST /api/apps/import (implemented in Task 6)
+var validImportTypes = map[string]bool{"next": true, "vite": true, "static": true, "node": true, "custom": true}
+
+// resolveImportType returns the app type and root dir to record for an import.
+// When appType is empty ("auto"), detection runs (scoped to rootDir when given).
+func resolveImportType(dir, appType, rootDir string) (string, string, error) {
+	if appType != "" {
+		if !validImportTypes[appType] {
+			return "", "", fmt.Errorf("app_type must be one of next, vite, static, node, custom")
+		}
+		if rootDir == "" {
+			rootDir = "/"
+		}
+		return appType, rootDir, nil
+	}
+	hint := rootDir
+	if hint == "" {
+		hint = "/"
+	}
+	meta, err := services.DetectAppType(dir, hint)
+	if err != nil {
+		return "", "", err
+	}
+	return meta.AppType, meta.RootDir, nil
+}
+
+// writePanelMeta records the resolved type so syncPanelMeta agrees with the DB.
+func writePanelMeta(dir, appType, rootDir string) error {
+	data, err := json.Marshal(services.PanelMeta{AppType: appType, RootDir: rootDir})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, ".panel_meta"), append(data, '\n'), 0644)
+}
+
+// importResponse is an App plus an optional warning about a PM2 port mismatch.
+type importResponse struct {
+	*models.App
+	Warning string `json:"warning,omitempty"`
+}
+
+// Import handles POST /api/apps/import — registers an existing directory as an
+// app without running any script or touching PM2/NGINX.
 func (h *ScanHandler) Import(w http.ResponseWriter, r *http.Request) {
-	Error(w, http.StatusNotImplemented, "not implemented")
+	var body struct {
+		Name      string `json:"name"`
+		AppType   string `json:"app_type"`
+		RootDir   string `json:"root_dir"`
+		OutputDir string `json:"output_dir"`
+		Port      int    `json:"port"`
+	}
+	if err := ReadJSON(r, &body); err != nil {
+		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if body.AppType == "auto" {
+		body.AppType = ""
+	}
+	if !services.ValidateAppName(body.Name) {
+		Error(w, http.StatusBadRequest, "Invalid app name. Use lowercase letters, numbers and hyphens only.")
+		return
+	}
+
+	dir := filepath.Join(h.cfg.AppsDir, body.Name)
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		Error(w, http.StatusNotFound, "Directory not found: "+dir)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	var exists bool
+	if err := h.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM apps WHERE name = $1)", body.Name).Scan(&exists); err != nil {
+		Error(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if exists {
+		Error(w, http.StatusConflict, "App is already managed by the panel")
+		return
+	}
+
+	if body.RootDir != "" && (!strings.HasPrefix(body.RootDir, "/") || strings.Contains(body.RootDir, "..")) {
+		Error(w, http.StatusBadRequest, "root_dir must start with / and must not contain ..")
+		return
+	}
+	if body.OutputDir == "" {
+		body.OutputDir = "dist"
+	}
+	if err := validateOutputDir(body.OutputDir); err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	appType, rootDir, err := resolveImportType(dir, body.AppType, body.RootDir)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	used, err := h.port.UsedPorts(ctx)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to read used ports")
+		return
+	}
+	detectedPort := detectPort(dir)
+	port, err := choosePort(body.Port, detectedPort, used, h.cfg.PortStart, h.cfg.PortEnd)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Env vars: .env then .env.local overrides (same rule as ReadEnvFiles)
+	envVars := make(map[string]string)
+	for _, f := range []string{".env", ".env.local"} {
+		if parsed, err := parseEnvFile(filepath.Join(dir, f)); err == nil {
+			for k, v := range parsed {
+				envVars[k] = v
+			}
+		}
+	}
+
+	repoURL, branch := "", ""
+	if git := readGitInfo(dir); git != nil {
+		repoURL, branch = git.RepoURL, git.Branch
+	}
+	if branch == "" && repoURL != "" {
+		branch = "main"
+	}
+
+	if err := writePanelMeta(dir, appType, rootDir); err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to write .panel_meta: "+err.Error())
+		return
+	}
+
+	envJSON, _ := json.Marshal(envVars)
+	app, err := scanAppRow(h.db.QueryRow(ctx,
+		`INSERT INTO apps (name, repo_url, branch, port, env_vars, app_type, root_dir, output_dir)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 RETURNING `+appColumns,
+		body.Name, repoURL, branch, port, envJSON, appType, rootDir, body.OutputDir,
+	))
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to save app")
+		return
+	}
+
+	resp := importResponse{App: app}
+	if status, ok := h.pm2StatusMap()[body.Name]; ok && detectedPort != 0 && detectedPort != port {
+		resp.Warning = fmt.Sprintf("PM2 process (%s) is listening on %d but the app was registered on %d; run Setup to align them.", status, detectedPort, port)
+	}
+	SuccessCreated(w, resp)
 }
 
 // DeleteDir handles DELETE /api/apps/scan/{name} (implemented in Task 7)
