@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -317,16 +318,24 @@ func (h *ScanHandler) loadManaged(ctx context.Context) ([]managedApp, map[string
 		}
 		apps = append(apps, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
 
 	domains := make(map[string][]string)
 	dRows, err := h.db.Query(ctx, "SELECT app_id, domain FROM domains ORDER BY domain")
-	if err == nil {
+	if err != nil {
+		log.Printf("[scan] domains query failed: %v", err)
+	} else {
 		defer dRows.Close()
 		for dRows.Next() {
 			var appID, domain string
 			if dRows.Scan(&appID, &domain) == nil {
 				domains[appID] = append(domains[appID], domain)
 			}
+		}
+		if err := dRows.Err(); err != nil {
+			log.Printf("[scan] domains query failed: %v", err)
 		}
 	}
 	return apps, domains, nil
