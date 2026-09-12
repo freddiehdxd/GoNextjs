@@ -26,7 +26,7 @@ const (
 )
 
 type loginAttempt struct {
-	count      int
+	count       int
 	lockedUntil time.Time
 }
 
@@ -256,7 +256,11 @@ func (h *AuthHandler) recordFailure(ip string) {
 	}
 
 	attempt.count++
-	if attempt.count >= maxLoginAttempts {
+	if attempt.count == maxLoginAttempts {
+		attempt.lockedUntil = time.Now().Add(lockoutDuration)
+		// Exact format is matched by the fail2ban filter in scripts/setup_panel.sh.
+		log.Printf("Login lockout: IP %s locked for 15 minutes after 5 failed attempts", ip)
+	} else if attempt.count > maxLoginAttempts {
 		attempt.lockedUntil = time.Now().Add(lockoutDuration)
 	}
 }

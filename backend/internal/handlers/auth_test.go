@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -299,5 +302,27 @@ func TestVerifyCredentials_ConstantTimeUsername(t *testing.T) {
 	}
 	if !h.verifyCredentials("admin", "testpass123") {
 		t.Error("Should accept correct credentials")
+	}
+}
+
+func TestLockoutLogsLine(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	h := newTestAuthHandler()
+	for i := 0; i < 4; i++ {
+		h.recordFailure("203.0.113.7")
+	}
+	if strings.Contains(buf.String(), "Login lockout") {
+		t.Fatalf("lockout logged before the 5th failure: %s", buf.String())
+	}
+	h.recordFailure("203.0.113.7")
+	want := "Login lockout: IP 203.0.113.7 locked for 15 minutes after 5 failed attempts"
+	if !strings.Contains(buf.String(), want) {
+		t.Fatalf("expected log line %q, got %q", want, buf.String())
+	}
+	if strings.Count(buf.String(), "Login lockout") != 1 {
+		t.Errorf("lockout must be logged exactly once")
 	}
 }
