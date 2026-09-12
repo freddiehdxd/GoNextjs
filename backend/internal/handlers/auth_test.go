@@ -326,3 +326,31 @@ func TestLockoutLogsLine(t *testing.T) {
 		t.Errorf("lockout must be logged exactly once")
 	}
 }
+
+func TestBlockedAttemptLogsLine(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	h := newTestAuthHandler()
+	ip := "203.0.113.9"
+	for i := 0; i < 5; i++ {
+		h.recordFailure(ip)
+	}
+
+	body := `{"username":"admin","password":"testpass123"}`
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "203.0.113.9:12345"
+	w := httptest.NewRecorder()
+	h.Login(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("Expected 429, got %d", w.Code)
+	}
+
+	want := "Blocked login attempt from locked IP: 203.0.113.9"
+	if !strings.Contains(buf.String(), want) {
+		t.Fatalf("expected log line %q, got %q", want, buf.String())
+	}
+}

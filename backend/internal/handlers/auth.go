@@ -93,6 +93,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if exists && attempt.lockedUntil.After(time.Now()) {
 		remaining := int(time.Until(attempt.lockedUntil).Minutes()) + 1
 		h.mu.Unlock()
+		// Exact format is matched by the fail2ban filter in scripts/setup_panel.sh.
+		log.Printf("Blocked login attempt from locked IP: %s", ip)
 		Error(w, http.StatusTooManyRequests,
 			fmt.Sprintf("Too many failed attempts. Try again in %d minute(s).", remaining))
 		return
