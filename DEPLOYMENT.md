@@ -274,6 +274,7 @@ The Go backend (port 4000) is **not** exposed — it only listens on
 | `APP_PORT_START`      | Start of port range for hosted apps (3001)      |
 | `APP_PORT_END`        | End of port range for hosted apps (3999)        |
 | `PANEL_ORIGIN`        | Panel URL for CORS and cookie Secure flag       |
+| `DEPLOY_TIMEOUT`      | Max runtime for deploy/setup scripts (Go duration, default 15m, minimum 1m) |
 
 The frontend has no runtime environment variables — it is built as a static
 SPA that calls `/api/*` on the same origin.

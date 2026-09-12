@@ -141,9 +141,7 @@ panel/
 │   ├── install_postgres.sh        PostgreSQL installation
 │   ├── install_redis.sh           Redis installation
 │   ├── install.sh                 General install script
-│   ├── create_ssl.sh              SSL certificate creation
-│   ├── deploy.py                  Python deploy helper
-│   └── fix_embed.py               Embed fix utility
+│   └── create_ssl.sh              SSL certificate creation
 └── nginx-templates/
     └── app.conf.example           Template for hosted apps
 ```
