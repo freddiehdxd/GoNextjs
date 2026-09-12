@@ -93,6 +93,7 @@ export default function Settings() {
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         setError(body.error || `Update failed (HTTP ${response.status})`);
+        statusRef.current = 'error';
         setStatus('error');
         return;
       }
@@ -100,6 +101,7 @@ export default function Settings() {
       const reader = response.body?.getReader();
       if (!reader) {
         setError('Streaming not supported');
+        statusRef.current = 'error';
         setStatus('error');
         return;
       }
@@ -141,6 +143,7 @@ export default function Settings() {
                 break;
               case 'complete':
                 setLogs(prev => [...prev, '', parsed.message]);
+                statusRef.current = 'success';
                 setStatus('success');
                 // Re-check version after successful update
                 setTimeout(() => checkForUpdates(), 3000);
@@ -148,6 +151,7 @@ export default function Settings() {
               case 'error':
                 setLogs(prev => [...prev, `ERROR: ${parsed.message}`]);
                 setError(parsed.message);
+                statusRef.current = 'error';
                 setStatus('error');
                 break;
             }

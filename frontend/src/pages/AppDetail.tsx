@@ -63,6 +63,8 @@ export default function AppDetail() {
     setLoading(false);
   }, [name]);
 
+  useEffect(() => { loadedOnce.current = false; setPollError(''); }, [name]);
+
   useEffect(() => { fetchApp(); }, [fetchApp]);
 
   const appId = app?.id;
