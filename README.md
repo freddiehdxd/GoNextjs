@@ -143,8 +143,7 @@ panel/
 │   ├── deploy.py                  Python deploy helper
 │   └── fix_embed.py               Embed fix utility
 └── nginx-templates/
-    ├── app.conf.example           Template for hosted apps
-    └── panel.conf.example         Template for the panel itself
+    └── app.conf.example           Template for hosted apps
 ```
 
 ## API Endpoints

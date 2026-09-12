@@ -15,6 +15,23 @@ import (
 // without touching the panel-managed site config.
 const upstreamsDir = "/etc/nginx/upstreams"
 
+// sslSettings is shared by both SSL templates (Mozilla "intermediate" profile).
+const sslSettings = `    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:PanelSSL:10m;
+
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    add_header X-Content-Type-Options nosniff always;
+`
+
+// securityHeaders is repeated inside location blocks that set their own
+// add_header, because NGINX does not inherit add_header into such blocks.
+const securityHeaders = `        add_header Strict-Transport-Security "max-age=63072000" always;
+        add_header X-Content-Type-Options nosniff always;
+`
+
 // upstreamName returns an nginx-safe upstream identifier for a domain.
 func upstreamName(domain string) string {
 	r := strings.NewReplacer(".", "_", "-", "_")
@@ -76,21 +93,20 @@ upstream %s {
 
 server {
     listen 80;
+    listen [::]:80;
     server_name %s;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name %s;
 
     ssl_certificate /etc/letsencrypt/live/%s/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/%s/privkey.pem;
 
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-
+%s
     client_max_body_size 100M;
 
     location / {
@@ -104,7 +120,7 @@ server {
         proxy_set_header X-Forwarded-Proto https;
     }
 }
-`, upstream, include, domain, domain, domain, domain, upstream)
+`, upstream, include, domain, domain, domain, domain, sslSettings, upstream)
 	}
 
 	return fmt.Sprintf(`# Managed by Panel -- do not edit manually
@@ -114,6 +130,7 @@ upstream %s {
 
 server {
     listen 80;
+    listen [::]:80;
     server_name %s;
 
     client_max_body_size 100M;
@@ -126,7 +143,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 `, upstream, include, domain, upstream)
@@ -138,21 +155,20 @@ func (n *Nginx) BuildStaticConfig(domain, docRoot string, ssl bool) string {
 		return fmt.Sprintf(`# Managed by Panel -- do not edit manually
 server {
     listen 80;
+    listen [::]:80;
     server_name %s;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name %s;
 
     ssl_certificate /etc/letsencrypt/live/%s/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/%s/privkey.pem;
 
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-
+%s
     client_max_body_size 100M;
 
     gzip on;
@@ -163,7 +179,7 @@ server {
 
     location = /index.html {
         add_header Cache-Control "no-cache";
-    }
+%s    }
 
     location / {
         try_files $uri $uri/ /index.html;
@@ -172,14 +188,15 @@ server {
     location ~* \.(js|css|png|jpg|jpeg|gif|svg|woff2?)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
-    }
+%s    }
 }
-`, domain, domain, domain, domain, docRoot)
+`, domain, domain, domain, domain, sslSettings, docRoot, securityHeaders, securityHeaders)
 	}
 
 	return fmt.Sprintf(`# Managed by Panel -- do not edit manually
 server {
     listen 80;
+    listen [::]:80;
     server_name %s;
 
     client_max_body_size 100M;
