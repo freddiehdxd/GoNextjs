@@ -73,7 +73,7 @@ Rules:
 - `git` is read directly from disk: `.git/HEAD` gives the branch (`ref: refs/heads/<branch>`; a detached HEAD yields `branch: ""`), `.git/config` gives `[remote "origin"] url`. `null` when `.git` is absent or unreadable. No `git` binary is added to the executor allowlist.
 - `detected_port` (top-level integer) is the port found on disk: `ecosystem.config.js` (regex `PORT:\s*['"]?(\d+)`), else `PORT=` in `.env`, else `0`.
 - `pm2` matches the directory name against one `pm2.List()` call made once per scan. `null` when no PM2 process has that name; otherwise `status` is the PM2 status and `port` is `detected_port`.
-- `domains` is informational: every file in `cfg.NginxAvail` whose content contains `proxy_pass http://127.0.0.1:<detected_port>` (only when `detected_port > 0`) or `root <path>` (exact directory path or a subpath of it). The file name is the domain.
+- `domains` is informational: every file in `cfg.NginxAvail` that (a) contains `proxy_pass http://127.0.0.1:<detected_port>;`, or (b) contains an `include <path>;` line whose file contains `server 127.0.0.1:<detected_port>;` (the per-domain upstream include the panel writes since commit `0246e23`), or (c) has a `root <path>` at or under the app directory. `<detected_port>` matching only applies when it is > 0. The file name is the domain.
 - **Orphaned** = rows in `apps` whose `filepath.Join(cfg.AppsDir, name)` does not exist. Each carries its port, its domains (from the `domains` table), and the PM2 status for its name from the same `pm2.List()` (`""` if none).
 - The PM2 call failing is not fatal: `pm2` fields are `null`/`""` and the scan still returns. Directory read errors on `AppsDir` itself are a 500.
 

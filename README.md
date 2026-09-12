@@ -17,7 +17,7 @@ a Vite + React frontend for minimal resource usage (~15 MB RAM for the API).
 | Feature              | Details                                                                                                      |
 |----------------------|--------------------------------------------------------------------------------------------------------------|
 | Authentication       | JWT-based admin login with bcrypt, HttpOnly cookies, rate limiting (10 req/15 min), IP lockout after 5 fails, constant-time comparison to prevent timing attacks |
-| App Management       | Deploy via GitHub URL, Git URL, or manual ZIP upload; build, start/stop/restart/rebuild/delete with PM2; per-app detail page with tabbed UI (overview, logs, config, deployments); auto port allocation (3001-3999) |
+| App Management       | Deploy via GitHub URL, Git URL, or manual ZIP upload; build, start/stop/restart/rebuild/delete with PM2; per-app detail page with tabbed UI (overview, logs, config, deployments); auto port allocation (3001-3999); scan /var/www/apps for unmanaged directories and import them |
 | Environment Vars     | Store env vars in DB, sync to `.env` on disk, read `.env` + `.env.local` with source tracking, auto-restart PM2 on change |
 | Domain Mgmt          | Auto-generate NGINX reverse-proxy configs with rollback on failure                                           |
 | SSL                  | Let's Encrypt via Certbot, auto-renewal, enable/disable SSL per domain                                      |
@@ -164,6 +164,9 @@ POST   /api/apps/{name}/action           Start/stop/restart/rebuild/delete/setup
 PUT    /api/apps/{name}/env              Update environment variables
 GET    /api/apps/{name}/env-file         Read .env/.env.local from disk with source tracking
 POST   /api/apps/{name}/deploy-zip       Upload .zip project file for manual deployment
+GET    /api/apps/scan                    List unmanaged directories in APPS_DIR and orphaned app records
+POST   /api/apps/import                  Register an existing directory as an app (no build/restart)
+DELETE /api/apps/scan/{name}             Delete an unmanaged directory
 
 POST   /api/domains                      Add domain to an app
 DELETE /api/domains/{domain}             Remove a domain
