@@ -98,6 +98,10 @@ func (h *AppsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		apps = append(apps, *app)
 	}
+	if err := rows.Err(); err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to fetch apps")
+		return
+	}
 
 	// Load all domains and attach to apps
 	domainRows, err := h.db.Query(ctx,

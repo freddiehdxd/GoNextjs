@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"panel-backend/internal/config"
 	"panel-backend/internal/models"
@@ -486,7 +489,16 @@ func (h *ScanHandler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dir := filepath.Join(h.cfg.AppsDir, body.Name)
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		Error(w, http.StatusNotFound, "Directory not found: "+dir)
+		return
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		Error(w, http.StatusBadRequest, "symlinked directories cannot be imported")
+		return
+	}
+	if !info.IsDir() {
 		Error(w, http.StatusNotFound, "Directory not found: "+dir)
 		return
 	}
@@ -565,7 +577,12 @@ func (h *ScanHandler) Import(w http.ResponseWriter, r *http.Request) {
 		body.Name, repoURL, branch, port, envJSON, appType, rootDir, body.OutputDir,
 	))
 	if err != nil {
-		Error(w, http.StatusInternalServerError, "Failed to save app")
+		_ = os.Remove(filepath.Join(dir, ".panel_meta")) // best effort — avoid stranding meta the DB row doesn't back
+		if isUniqueViolation(err) {
+			Error(w, http.StatusConflict, "App name or port is already in use")
+		} else {
+			Error(w, http.StatusInternalServerError, "Failed to save app")
+		}
 		return
 	}
 
@@ -574,6 +591,16 @@ func (h *ScanHandler) Import(w http.ResponseWriter, r *http.Request) {
 		resp.Warning = fmt.Sprintf("PM2 process (%s) is listening on %d but the app was registered on %d; run Setup to align them.", status, detectedPort, port)
 	}
 	SuccessCreated(w, resp)
+}
+
+// isUniqueViolation reports whether err is a Postgres unique_violation (23505),
+// including when wrapped.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
 }
 
 // resolveUnderAppsDir returns the absolute path of appsDir/name and refuses
@@ -606,10 +633,24 @@ func validateDirName(name string) error {
 	return nil
 }
 
+// decodeDirName percent-decodes a route segment; the decoded value must still
+// pass validateDirName. chi's URLParam returns the raw (still percent-encoded)
+// path segment, so callers must decode before using the name.
+func decodeDirName(raw string) (string, error) {
+	name, err := url.PathUnescape(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid directory name encoding")
+	}
+	if err := validateDirName(name); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
 // DeleteDir handles DELETE /api/apps/scan/{name} — removes an UNMANAGED directory.
 func (h *ScanHandler) DeleteDir(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if err := validateDirName(name); err != nil {
+	name, err := decodeDirName(chi.URLParam(r, "name"))
+	if err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -637,7 +678,9 @@ func (h *ScanHandler) DeleteDir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.pm2.Action("delete", name) // best effort — a stray process with this name
+	if _, ok := h.pm2StatusMap()[name]; ok {
+		h.pm2.Action("delete", name) // best effort — a stray process with this exact name
+	}
 
 	if err := os.RemoveAll(target); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to remove directory: "+err.Error())

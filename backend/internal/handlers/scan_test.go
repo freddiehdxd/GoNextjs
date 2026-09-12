@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"panel-backend/internal/services"
 )
@@ -384,5 +387,52 @@ func TestValidateDirName(t *testing.T) {
 		if err := validateDirName(name); err == nil {
 			t.Errorf("expected %q to be rejected", name)
 		}
+	}
+}
+
+func TestDecodeDirName(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"old%23backup", "old#backup", false},
+		{"a%20b", "a b", false},
+		{"Bad_Name", "Bad_Name", false},
+		{"a%2Fb", "", true}, // decodes to a/b, rejected by validateDirName
+		{"%zz", "", true},   // invalid percent-encoding
+		{"..", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := decodeDirName(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("decodeDirName(%q) err = %v, wantErr %v", tt.in, err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("decodeDirName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsUniqueViolation(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"unique violation", &pgconn.PgError{Code: "23505"}, true},
+		{"foreign key violation", &pgconn.PgError{Code: "23503"}, false},
+		{"generic error", errors.New("x"), false},
+		{"nil", nil, false},
+		{"wrapped unique violation", fmt.Errorf("w: %w", &pgconn.PgError{Code: "23505"}), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isUniqueViolation(tt.err); got != tt.want {
+				t.Errorf("isUniqueViolation(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }
