@@ -358,3 +358,16 @@ func TestWritePanelMeta(t *testing.T) {
 		t.Errorf("got %+v %v", meta, err)
 	}
 }
+
+func TestResolveUnderAppsDir(t *testing.T) {
+	appsDir := t.TempDir()
+	good, err := resolveUnderAppsDir(appsDir, "myapp")
+	if err != nil || good != filepath.Join(appsDir, "myapp") {
+		t.Errorf("got %q %v", good, err)
+	}
+	for _, bad := range []string{"..", "../x", "", "."} {
+		if _, err := resolveUnderAppsDir(appsDir, bad); err == nil {
+			t.Errorf("name %q should be rejected", bad)
+		}
+	}
+}

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"panel-backend/internal/config"
 	"panel-backend/internal/models"
 	"panel-backend/internal/services"
@@ -574,7 +576,59 @@ func (h *ScanHandler) Import(w http.ResponseWriter, r *http.Request) {
 	SuccessCreated(w, resp)
 }
 
-// DeleteDir handles DELETE /api/apps/scan/{name} (implemented in Task 7)
+// resolveUnderAppsDir returns the absolute path of appsDir/name and refuses
+// anything that is not strictly inside appsDir.
+func resolveUnderAppsDir(appsDir, name string) (string, error) {
+	base, err := filepath.Abs(appsDir)
+	if err != nil {
+		return "", err
+	}
+	target, err := filepath.Abs(filepath.Join(base, name))
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(target, base+string(filepath.Separator)) || target == base {
+		return "", fmt.Errorf("path escapes apps directory")
+	}
+	return target, nil
+}
+
+// DeleteDir handles DELETE /api/apps/scan/{name} — removes an UNMANAGED directory.
 func (h *ScanHandler) DeleteDir(w http.ResponseWriter, r *http.Request) {
-	Error(w, http.StatusNotImplemented, "not implemented")
+	name := chi.URLParam(r, "name")
+	if !services.ValidateAppName(name) {
+		Error(w, http.StatusBadRequest, "Invalid app name")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	var managed bool
+	if err := h.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM apps WHERE name = $1)", name).Scan(&managed); err != nil {
+		Error(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if managed {
+		Error(w, http.StatusConflict, "This app is managed by the panel; use the app's Delete action")
+		return
+	}
+
+	target, err := resolveUnderAppsDir(h.cfg.AppsDir, name)
+	if err != nil {
+		Error(w, http.StatusBadRequest, "Invalid path")
+		return
+	}
+	if _, err := os.Stat(target); err != nil {
+		Error(w, http.StatusNotFound, "Directory not found")
+		return
+	}
+
+	h.pm2.Action("delete", name) // best effort — a stray process with this name
+
+	if err := os.RemoveAll(target); err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to remove directory: "+err.Error())
+		return
+	}
+	Success(w, map[string]string{"message": "Directory removed"})
 }
