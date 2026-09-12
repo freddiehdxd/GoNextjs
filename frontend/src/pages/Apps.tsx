@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import {
   Plus, RotateCcw, ExternalLink, ChevronDown, ChevronUp,
   Github, Globe, Upload, Play, Square, Trash2, Zap,
-  GitBranch, Server, MoreHorizontal, FolderArchive, Check, Rocket, RefreshCw,
+  GitBranch, Server, MoreHorizontal, FolderArchive, Check, Rocket, RefreshCw, FolderSearch,
 } from 'lucide-react';
 import Shell from '@/components/Shell';
 import Modal from '@/components/Modal';
 import StatusBadge from '@/components/StatusBadge';
-import { api, App } from '@/lib/api';
+import ScanModal from '@/components/ScanModal';
+import { api, App, ScanResult } from '@/lib/api';
 
 type DeployType = 'github' | 'git' | 'empty';
 type EnvEntry = { key: string; value: string };
@@ -47,6 +48,14 @@ export default function AppsPage() {
   const [acting,   setActing]   = useState<string | null>(null);
   const [error,    setError]    = useState('');
 
+  const [scan, setScan]         = useState<ScanResult | null>(null);
+  const [showScan, setShowScan] = useState(false);
+
+  const fetchScan = useCallback(async () => {
+    const res = await api.get<ScanResult>('/apps/scan');
+    if (res.success && res.data) setScan(res.data);
+  }, []);
+
   const [deployType, setDeployType] = useState<DeployType>('github');
   const [form, setForm] = useState({
     name: '', repo_url: '', branch: 'main',
@@ -62,7 +71,7 @@ export default function AppsPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchApps(); }, [fetchApps]);
+  useEffect(() => { fetchApps(); fetchScan(); }, [fetchApps, fetchScan]);
 
   function resetModal() {
     setShowNew(false); setError('');
@@ -151,9 +160,22 @@ export default function AppsPage() {
             {loading ? 'Loading…' : `${running} running · ${apps.length} total`}
           </p>
         </div>
-        <button onClick={() => setShowNew(true)} className="btn-primary">
-          <Plus size={14} /> New App
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowScan(true)} className="btn-ghost relative" title="Find directories in the apps folder that the panel does not manage">
+            <FolderSearch size={14} /> Scan directory
+            {scan && (scan.unmanaged.length + scan.orphaned.length) > 0 && (
+              <span className="ml-1 text-[10px] font-mono px-1.5 py-0.5 rounded-full text-amber-300"
+                style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)' }}>
+                {scan.unmanaged.length > 0 && `${scan.unmanaged.length} unmanaged`}
+                {scan.unmanaged.length > 0 && scan.orphaned.length > 0 && ' · '}
+                {scan.orphaned.length > 0 && `${scan.orphaned.length} orphaned`}
+              </span>
+            )}
+          </button>
+          <button onClick={() => setShowNew(true)} className="btn-primary">
+            <Plus size={14} /> New App
+          </button>
+        </div>
       </div>
 
       {/* Loading skeleton */}
@@ -389,6 +411,13 @@ export default function AppsPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {showScan && (
+        <ScanModal
+          onClose={() => { setShowScan(false); fetchScan(); }}
+          onChanged={fetchApps}
+        />
       )}
 
       {/* New App Modal */}
