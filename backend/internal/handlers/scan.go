@@ -593,11 +593,24 @@ func resolveUnderAppsDir(appsDir, name string) (string, error) {
 	return target, nil
 }
 
+// validateDirName accepts any single path segment that is safe to delete under
+// AppsDir. Unlike ValidateAppName it allows uppercase/underscores so that
+// directories the scan lists with valid_name:false can still be removed.
+func validateDirName(name string) error {
+	if name == "" || name == "." || name == ".." {
+		return fmt.Errorf("invalid directory name")
+	}
+	if strings.ContainsAny(name, `/\`+"\x00") {
+		return fmt.Errorf("directory name must not contain path separators")
+	}
+	return nil
+}
+
 // DeleteDir handles DELETE /api/apps/scan/{name} — removes an UNMANAGED directory.
 func (h *ScanHandler) DeleteDir(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	if !services.ValidateAppName(name) {
-		Error(w, http.StatusBadRequest, "Invalid app name")
+	if err := validateDirName(name); err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

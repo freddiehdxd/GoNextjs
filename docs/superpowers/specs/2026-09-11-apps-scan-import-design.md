@@ -103,7 +103,7 @@ Nothing on disk changes except `.panel_meta`. No PM2 or NGINX action is taken.
 
 ### `DELETE /api/apps/scan/{name}`
 
-- `name` must pass `ValidateAppName` and must **not** be in `apps` (managed apps are deleted through the existing action; 409 otherwise).
+- `name` must be a single safe path segment (non-empty, not `.`/`..`, no path separators — directories the scan lists with `valid_name:false` are deletable) and must **not** be in `apps` (managed apps are deleted through the existing action; 409 otherwise).
 - Best-effort `pm2 delete <name>`.
 - `os.RemoveAll` on the resolved path, guarded the same way as the app delete action (absolute path must have `AppsDir` + separator as prefix).
 - 200 `{ "message": "Directory removed" }`; 404 if the directory does not exist.

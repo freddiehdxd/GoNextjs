@@ -371,3 +371,18 @@ func TestResolveUnderAppsDir(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateDirName(t *testing.T) {
+	valid := []string{"myapp", "Bad_Name", "My App", ".hidden"}
+	for _, name := range valid {
+		if err := validateDirName(name); err != nil {
+			t.Errorf("expected %q to be accepted, got error: %v", name, err)
+		}
+	}
+	invalid := []string{"", ".", "..", "a/b", `a\b`, "a\x00b"}
+	for _, name := range invalid {
+		if err := validateDirName(name); err == nil {
+			t.Errorf("expected %q to be rejected", name)
+		}
+	}
+}
