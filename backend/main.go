@@ -42,7 +42,7 @@ func main() {
 	}
 
 	// Create services
-	exec := services.NewExecutor(cfg.ScriptsDir, cfg.AppsDir)
+	exec := services.NewExecutor(cfg.ScriptsDir, cfg.AppsDir, cfg.DeployTimeout)
 	pm2 := services.NewPM2(exec)
 	nginx := services.NewNginx(exec, cfg.NginxAvail, cfg.NginxEnabled)
 	portAlloc := services.NewPortAllocator(db, cfg.PortStart, cfg.PortEnd)

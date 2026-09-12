@@ -15,7 +15,6 @@ import (
 
 const (
 	maxOutputSize  = 10 * 1024 * 1024 // 10MB
-	deployTimeout  = 5 * time.Minute
 	defaultTimeout = 2 * time.Minute
 	timeoutCode    = 124
 )
@@ -54,89 +53,49 @@ var (
 
 // Executor runs shell commands safely
 type Executor struct {
-	scriptsDir string
-	appsDir    string
+	scriptsDir    string
+	appsDir       string
+	deployTimeout time.Duration
 }
 
-// NewExecutor creates a new executor
-func NewExecutor(scriptsDir, appsDir string) *Executor {
-	return &Executor{
-		scriptsDir: scriptsDir,
-		appsDir:    appsDir,
+// NewExecutor creates a new executor. deployTimeout bounds deploy/setup scripts;
+// everything else uses defaultTimeout.
+func NewExecutor(scriptsDir, appsDir string, deployTimeout time.Duration) *Executor {
+	if deployTimeout <= 0 {
+		deployTimeout = deployTimeout0
 	}
+	return &Executor{scriptsDir: scriptsDir, appsDir: appsDir, deployTimeout: deployTimeout}
+}
+
+// deployTimeout0 is the fallback when no timeout is configured.
+const deployTimeout0 = 15 * time.Minute
+
+// runOpts carries the optional parts of a run.
+type runOpts struct {
+	extraEnv map[string]string // extra KEY=VALUE pairs (keys must be shell-safe)
+	stdin    io.Reader         // piped to the child's stdin when non-nil
+	stdout   io.Writer         // streams stdout here instead of buffering when non-nil
+}
+
+func (e *Executor) scriptTimeout(script string) time.Duration {
+	if script == "deploy_app.sh" || script == "setup_app.sh" {
+		return e.deployTimeout
+	}
+	return defaultTimeout
 }
 
 // RunScript runs an allowed shell script with arguments
 func (e *Executor) RunScript(script string, args ...string) (*models.ExecResult, error) {
-	if !allowedScripts[script] {
-		return nil, fmt.Errorf("script not allowed: %s", script)
-	}
-
-	scriptPath := e.scriptsDir + "/" + script
-	allArgs := append([]string{scriptPath}, args...)
-
-	timeout := defaultTimeout
-	if script == "deploy_app.sh" || script == "setup_app.sh" {
-		timeout = deployTimeout
-	}
-
-	return e.spawnSafe("/bin/bash", allArgs, timeout)
+	return e.RunScriptEnv(script, nil, args...)
 }
 
 // RunScriptEnv runs an allowed shell script with extra environment variables and arguments.
-// extraEnv keys must not contain spaces or shell metacharacters.
 func (e *Executor) RunScriptEnv(script string, extraEnv map[string]string, args ...string) (*models.ExecResult, error) {
 	if !allowedScripts[script] {
 		return nil, fmt.Errorf("script not allowed: %s", script)
 	}
-
-	scriptPath := e.scriptsDir + "/" + script
-	allArgs := append([]string{scriptPath}, args...)
-
-	timeout := defaultTimeout
-	if script == "deploy_app.sh" || script == "setup_app.sh" {
-		timeout = deployTimeout
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "/bin/bash", allArgs...)
-
-	// Base environment + caller-supplied extras
-	env := []string{
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"HOME=/root",
-		"APPS_DIR=" + e.appsDir,
-	}
-	for k, v := range extraEnv {
-		env = append(env, k+"="+v)
-	}
-	cmd.Env = env
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &limitedWriter{buf: &stdout, max: maxOutputSize}
-	cmd.Stderr = &limitedWriter{buf: &stderr, max: maxOutputSize}
-
-	err := cmd.Run()
-	result := &models.ExecResult{
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
-		Code:   0,
-	}
-
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			result.Code = timeoutCode
-			result.Stderr = result.Stderr + "\n... command timed out"
-		} else if exitErr, ok := err.(*exec.ExitError); ok {
-			result.Code = exitErr.ExitCode()
-		} else {
-			result.Code = 1
-			result.Stderr = err.Error()
-		}
-	}
-	return result, nil
+	allArgs := append([]string{e.scriptsDir + "/" + script}, args...)
+	return e.run("/bin/bash", allArgs, e.scriptTimeout(script), runOpts{extraEnv: extraEnv})
 }
 
 // RunBin runs an allowed binary with arguments
@@ -145,40 +104,72 @@ func (e *Executor) RunBin(bin string, args ...string) (*models.ExecResult, error
 	if !ok {
 		return nil, fmt.Errorf("binary not allowed: %s", bin)
 	}
-
-	return e.spawnSafe(binPath, args, defaultTimeout)
+	return e.run(binPath, args, defaultTimeout, runOpts{})
 }
 
-// spawnSafe executes a command safely with timeout and output limits
-func (e *Executor) spawnSafe(binary string, args []string, timeout time.Duration) (*models.ExecResult, error) {
+// RunBinStream runs an allowed binary and streams stdout directly to w.
+// Used for large outputs like pg_dump where buffering is not practical.
+func (e *Executor) RunBinStream(w io.Writer, bin string, args ...string) error {
+	binPath, ok := allowedBins[bin]
+	if !ok {
+		return fmt.Errorf("binary not allowed: %s", bin)
+	}
+	res, err := e.run(binPath, args, 5*time.Minute, runOpts{stdout: w})
+	if err != nil {
+		return err
+	}
+	if res.Code != 0 {
+		return fmt.Errorf("exit status %d: %s", res.Code, res.Stderr)
+	}
+	return nil
+}
+
+// RunBinWithStdin runs an allowed binary and pipes r into its stdin.
+// Used for operations like pg_restore / psql restore.
+func (e *Executor) RunBinWithStdin(r io.Reader, bin string, args ...string) (*models.ExecResult, error) {
+	binPath, ok := allowedBins[bin]
+	if !ok {
+		return nil, fmt.Errorf("binary not allowed: %s", bin)
+	}
+	return e.run(binPath, args, 10*time.Minute, runOpts{stdin: r})
+}
+
+// run executes a command with a restricted environment, a timeout that kills
+// the whole process group, and bounded output buffers.
+func (e *Executor) run(binary string, args []string, timeout time.Duration, o runOpts) (*models.ExecResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, binary, args...)
-
-	// Set restricted environment
-	cmd.Env = []string{
+	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME=/root",
 		"APPS_DIR=" + e.appsDir,
 	}
+	for k, v := range o.extraEnv {
+		env = append(env, k+"="+v)
+	}
+	cmd.Env = env
+	cmd.WaitDelay = 10 * time.Second
+	setProcessGroup(cmd)
 
+	if o.stdin != nil {
+		cmd.Stdin = o.stdin
+	}
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &limitedWriter{buf: &stdout, max: maxOutputSize}
+	if o.stdout != nil {
+		cmd.Stdout = o.stdout
+	} else {
+		cmd.Stdout = &limitedWriter{buf: &stdout, max: maxOutputSize}
+	}
 	cmd.Stderr = &limitedWriter{buf: &stderr, max: maxOutputSize}
 
 	err := cmd.Run()
-
-	result := &models.ExecResult{
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
-		Code:   0,
-	}
-
+	result := &models.ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			result.Code = timeoutCode
-			result.Stderr = result.Stderr + "\n... command timed out"
+			result.Stderr += "\n... command timed out"
 		} else if exitErr, ok := err.(*exec.ExitError); ok {
 			result.Code = exitErr.ExitCode()
 		} else {
@@ -186,7 +177,6 @@ func (e *Executor) spawnSafe(binary string, args []string, timeout time.Duration
 			result.Stderr = err.Error()
 		}
 	}
-
 	return result, nil
 }
 
@@ -212,77 +202,6 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 	n, err := w.buf.Write(p)
 	w.written += n
 	return n, err
-}
-
-// RunBinStream runs an allowed binary and streams stdout directly to the provided writer.
-// Used for large outputs like pg_dump where buffering is not practical.
-func (e *Executor) RunBinStream(w io.Writer, bin string, args ...string) error {
-	binPath, ok := allowedBins[bin]
-	if !ok {
-		return fmt.Errorf("binary not allowed: %s", bin)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, binPath, args...)
-	cmd.Env = []string{
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"HOME=/root",
-	}
-	cmd.Stdout = w
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &limitedWriter{buf: &stderr, max: maxOutputSize}
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%v: %s", err, stderr.String())
-	}
-	return nil
-}
-
-// RunBinWithStdin runs an allowed binary and pipes the provided reader into stdin.
-// Used for operations like pg_restore / psql restore.
-func (e *Executor) RunBinWithStdin(r io.Reader, bin string, args ...string) (*models.ExecResult, error) {
-	binPath, ok := allowedBins[bin]
-	if !ok {
-		return nil, fmt.Errorf("binary not allowed: %s", bin)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, binPath, args...)
-	cmd.Env = []string{
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"HOME=/root",
-	}
-	cmd.Stdin = r
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &limitedWriter{buf: &stdout, max: maxOutputSize}
-	cmd.Stderr = &limitedWriter{buf: &stderr, max: maxOutputSize}
-
-	err := cmd.Run()
-	result := &models.ExecResult{
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
-		Code:   0,
-	}
-
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			result.Code = timeoutCode
-			result.Stderr = result.Stderr + "\n... command timed out"
-		} else if exitErr, ok := err.(*exec.ExitError); ok {
-			result.Code = exitErr.ExitCode()
-		} else {
-			result.Code = 1
-			result.Stderr = err.Error()
-		}
-	}
-
-	return result, nil
 }
 
 // ValidateAppName validates an application name

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -30,6 +31,7 @@ type Config struct {
 	DBUser        string
 	DBPassword    string
 	Production    bool
+	DeployTimeout time.Duration
 }
 
 func Load() (*Config, error) {
@@ -52,6 +54,7 @@ func Load() (*Config, error) {
 		PortEnd:       getEnvInt("APP_PORT_END", 3999),
 		DBHost:        getEnv("DB_HOST", "localhost"),
 		Production:    getEnv("PANEL_ENV", getEnv("NODE_ENV", "production")) == "production",
+		DeployTimeout: parseDeployTimeout(getEnv("DEPLOY_TIMEOUT", "")),
 	}
 
 	// Parse DB user/password from DATABASE_URL for connecting to managed databases
@@ -105,4 +108,21 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// parseDeployTimeout reads DEPLOY_TIMEOUT as a Go duration; default 15m, minimum 1m.
+func parseDeployTimeout(s string) time.Duration {
+	const def, min = 15 * time.Minute, 1 * time.Minute
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		log.Printf("WARNING: invalid DEPLOY_TIMEOUT %q, using %s", s, def)
+		return def
+	}
+	if d < min {
+		return min
+	}
+	return d
 }
