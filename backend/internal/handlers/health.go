@@ -102,7 +102,9 @@ func (h *HealthChecker) checkAll() {
 	var apps []appInfo
 	for rows.Next() {
 		var a appInfo
-		rows.Scan(&a.name, &a.port, &a.appType, &a.startCmd)
+		if err := rows.Scan(&a.name, &a.port, &a.appType, &a.startCmd); err != nil {
+			continue
+		}
 		apps = append(apps, a)
 	}
 

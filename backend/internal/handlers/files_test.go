@@ -1,10 +1,17 @@
 package handlers
 
 import (
+	"bytes"
+	"mime/multipart"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
+
+	"panel-backend/internal/config"
 )
 
 // windowsPathExpectation: filepath.Base only splits on backslash on Windows.
@@ -120,5 +127,89 @@ func TestBlockedExtensions(t *testing.T) {
 		if blockedExtensions[ext] {
 			t.Errorf("Extension %q should NOT be blocked", ext)
 		}
+	}
+}
+
+// TestUpload_Success exercises the multipart upload path end-to-end, making
+// sure resolving the destination path before opening the source file (the
+// reordering that avoids leaking the source handle on a resolve failure)
+// still uploads a well-formed file correctly.
+func TestUpload_Success(t *testing.T) {
+	root := t.TempDir()
+	h := &FilesHandler{cfg: &config.Config{AppsDir: root}}
+
+	if err := os.MkdirAll(filepath.Join(root, "myapp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("files", "hello.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte("hello world")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	r := chi.NewRouter()
+	r.Post("/files/{app}/upload", h.Upload)
+
+	req := httptest.NewRequest("POST", "/files/myapp/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "myapp", "hello.txt"))
+	if err != nil {
+		t.Fatalf("expected uploaded file to exist: %v", err)
+	}
+	if string(data) != "hello world" {
+		t.Errorf("uploaded content = %q, want %q", string(data), "hello world")
+	}
+}
+
+// TestUpload_PathEscapeRejected verifies the top-level path check in Upload
+// still rejects a request whose target directory escapes the app dir,
+// before any multipart file is opened.
+func TestUpload_PathEscapeRejected(t *testing.T) {
+	root := t.TempDir()
+	h := &FilesHandler{cfg: &config.Config{AppsDir: root}}
+
+	if err := os.MkdirAll(filepath.Join(root, "myapp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("files", "good.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	r := chi.NewRouter()
+	r.Post("/files/{app}/upload", h.Upload)
+
+	// path=../ makes resolveAppPath fail for every uploaded file (escapes appDir).
+	req := httptest.NewRequest("POST", "/files/myapp/upload?path=..", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Fatalf("expected 400 for escaping path, got %d: %s", w.Code, w.Body.String())
 	}
 }

@@ -292,14 +292,14 @@ func (h *FilesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Open source file
-		src, err := fh.Open()
+		// Create destination
+		destPath, err := resolveAppPath(appDir, filepath.Join(subPath, name))
 		if err != nil {
 			continue
 		}
 
-		// Create destination
-		destPath, err := resolveAppPath(appDir, filepath.Join(subPath, name))
+		// Open source file
+		src, err := fh.Open()
 		if err != nil {
 			continue
 		}
