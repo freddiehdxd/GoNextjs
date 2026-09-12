@@ -35,6 +35,8 @@ func (h *SSLHandler) Enable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body.Domain = normalizeDomain(body.Domain)
+
 	if body.Domain == "" || body.Email == "" {
 		Error(w, http.StatusBadRequest, "domain and email required")
 		return
@@ -125,6 +127,8 @@ func (h *SSLHandler) Disable(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "domain required")
 		return
 	}
+
+	body.Domain = normalizeDomain(body.Domain)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()

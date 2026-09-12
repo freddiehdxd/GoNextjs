@@ -216,6 +216,11 @@ var migrations = []struct {
 			ALTER TABLE apps ADD COLUMN IF NOT EXISTS install_cmd TEXT NOT NULL DEFAULT '';
 		`,
 	},
+	{
+		version:     6,
+		description: "Lowercase existing domain names",
+		sql:         `UPDATE domains SET domain = lower(domain) WHERE domain <> lower(domain);`,
+	},
 }
 
 // InitSchema runs all pending migrations in order and performs cleanup.

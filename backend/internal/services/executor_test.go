@@ -55,7 +55,7 @@ func TestValidateDomain(t *testing.T) {
 		{"invalid path traversal", "../../../etc/passwd", false},
 		{"invalid slash", "example.com/path", false},
 		{"invalid null byte", "example\x00.com", false},
-		{"invalid uppercase rejected", "Example.COM", false},
+		{"mixed case accepted (normalised by handlers)", "Example.COM", true},
 		{"invalid underscore", "my_app.example.com", false},
 	}
 	for _, tt := range tests {

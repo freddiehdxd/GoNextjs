@@ -14,6 +14,12 @@ import (
 	"panel-backend/internal/services"
 )
 
+// normalizeDomain lowercases and trims a domain before validation/storage so
+// NGINX file names, certbot paths and DB lookups agree.
+func normalizeDomain(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
 // DomainsHandler handles domain management routes
 type DomainsHandler struct {
 	db      *services.DB
@@ -36,6 +42,8 @@ func (h *DomainsHandler) Add(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "app_name and domain required")
 		return
 	}
+
+	body.Domain = normalizeDomain(body.Domain)
 
 	if body.AppName == "" || body.Domain == "" {
 		Error(w, http.StatusBadRequest, "app_name and domain required")
@@ -119,7 +127,7 @@ func (h *DomainsHandler) Add(w http.ResponseWriter, r *http.Request) {
 
 // Remove handles DELETE /api/domains/:domain
 func (h *DomainsHandler) Remove(w http.ResponseWriter, r *http.Request) {
-	domain := chi.URLParam(r, "domain")
+	domain := normalizeDomain(chi.URLParam(r, "domain"))
 
 	if !services.ValidateDomain(domain) {
 		Error(w, http.StatusBadRequest, "Invalid domain name")
