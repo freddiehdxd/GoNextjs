@@ -173,7 +173,7 @@ chmod +x "${PANEL_DIR}"/scripts/*.sh
 
 SERVER_IP="$(curl -fsSL --connect-timeout 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
 
-cat > "${PANEL_DIR}/backend/.env" <<EOF
+( umask 077; cat > "${PANEL_DIR}/backend/.env" <<EOF
 PORT=4000
 PANEL_ENV=production
 JWT_SECRET=${JWT_SECRET}
@@ -187,8 +187,10 @@ APP_PORT_START=3001
 APP_PORT_END=3999
 PANEL_ORIGIN=http://${SERVER_IP}
 EOF
+)
 
 ok "Config written to backend/.env"
+chmod 600 "${PANEL_DIR}/backend/.env"
 
 # Generate bcrypt hash for admin password BEFORE starting the backend
 # (production mode requires ADMIN_PASSWORD_HASH — plaintext is rejected)
@@ -200,17 +202,20 @@ cat > /tmp/panel-hash/main.go <<'HASHGO'
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
-	if len(os.Args) < 2 {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil || len(data) == 0 {
 		os.Exit(1)
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(os.Args[1]), 12)
+	hash, err := bcrypt.GenerateFromPassword(bytes.TrimRight(data, "\r\n"), 12)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -219,17 +224,15 @@ func main() {
 HASHGO
 cp go.mod /tmp/panel-hash/go.mod
 cp go.sum /tmp/panel-hash/go.sum
-BCRYPT_HASH=$(cd /tmp/panel-hash && go run main.go "${ADMIN_PASS}" 2>/dev/null || echo "")
+BCRYPT_HASH=$(cd /tmp/panel-hash && printf '%s' "${ADMIN_PASS}" | go run main.go 2>/dev/null || echo "")
 rm -rf /tmp/panel-hash
 
 if [ -n "$BCRYPT_HASH" ]; then
   echo "ADMIN_PASSWORD_HASH='${BCRYPT_HASH}'" >> "${PANEL_DIR}/backend/.env"
+  chmod 600 "${PANEL_DIR}/backend/.env"
   ok "Admin password bcrypt-hashed"
 else
-  # Fallback: write plaintext password (only works in dev mode)
-  warn "Could not hash password — falling back to plaintext"
-  sed -i 's/^PANEL_ENV=production/PANEL_ENV=development/' "${PANEL_DIR}/backend/.env"
-  echo "ADMIN_PASSWORD=${ADMIN_PASS}" >> "${PANEL_DIR}/backend/.env"
+  fail "Could not generate the admin password hash (Go toolchain problem?). Aborting — refusing to write a plaintext password."
 fi
 
 # ── 10. Build ─────────────────────────────────────────────────────────────
@@ -418,7 +421,7 @@ cat > /etc/fail2ban/jail.local <<'JAIL'
 bantime  = 3600
 findtime = 600
 maxretry = 5
-backend  = systemd
+backend  = auto
 
 [sshd]
 enabled  = true
