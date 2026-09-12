@@ -25,7 +25,6 @@ var allowedScripts = map[string]bool{
 	"install_nginx.sh":    true,
 	"install_postgres.sh": true,
 	"install_redis.sh":    true,
-	"deploy_next_app.sh":  true,
 	"deploy_app.sh":       true,
 	"setup_app.sh":        true,
 	"create_ssl.sh":       true,
@@ -33,16 +32,16 @@ var allowedScripts = map[string]bool{
 
 // Allowed binaries with absolute paths
 var allowedBins = map[string]string{
-	"pm2":       "/usr/bin/pm2",
-	"nginx":     "/usr/sbin/nginx",
-	"certbot":   "/usr/bin/certbot",
-	"systemctl": "/bin/systemctl",
+	"pm2":        "/usr/bin/pm2",
+	"nginx":      "/usr/sbin/nginx",
+	"certbot":    "/usr/bin/certbot",
+	"systemctl":  "/bin/systemctl",
 	"psql":       "/usr/bin/psql",
 	"pg_dump":    "/usr/bin/pg_dump",
 	"pg_restore": "/usr/bin/pg_restore",
 	"unzip":      "/usr/bin/unzip",
 	"tail":       "/usr/bin/tail",
-	"redis-cli": "/usr/bin/redis-cli",
+	"redis-cli":  "/usr/bin/redis-cli",
 	"tar":        "/bin/tar",
 }
 
@@ -77,7 +76,7 @@ func (e *Executor) RunScript(script string, args ...string) (*models.ExecResult,
 	allArgs := append([]string{scriptPath}, args...)
 
 	timeout := defaultTimeout
-	if script == "deploy_next_app.sh" || script == "deploy_app.sh" || script == "setup_app.sh" {
+	if script == "deploy_app.sh" || script == "setup_app.sh" {
 		timeout = deployTimeout
 	}
 
@@ -95,7 +94,7 @@ func (e *Executor) RunScriptEnv(script string, extraEnv map[string]string, args 
 	allArgs := append([]string{scriptPath}, args...)
 
 	timeout := defaultTimeout
-	if script == "deploy_next_app.sh" || script == "deploy_app.sh" || script == "setup_app.sh" {
+	if script == "deploy_app.sh" || script == "setup_app.sh" {
 		timeout = deployTimeout
 	}
 

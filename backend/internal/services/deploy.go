@@ -38,13 +38,25 @@ func WriteEnvFile(appsDir, appName string, envVars map[string]string) error {
 	return os.WriteFile(envPath, []byte(content), 0600)
 }
 
-// DeployApp writes the .env file and runs deploy_next_app.sh for the given app.
+// AppScriptEnv returns the environment the deploy/setup scripts read for an app.
+func AppScriptEnv(app *models.App) map[string]string {
+	return map[string]string{
+		"APP_TYPE":    app.AppType,
+		"ROOT_DIR":    app.RootDir,
+		"OUTPUT_DIR":  app.OutputDir,
+		"BUILD_CMD":   app.BuildCmd,
+		"START_CMD":   app.StartCmd,
+		"INSTALL_CMD": app.InstallCmd,
+	}
+}
+
+// DeployApp writes the .env file and runs deploy_app.sh for the given app.
 // Used by the cron scheduler; HTTP handlers call WriteEnvFile directly.
 func DeployApp(app *models.App, exec *Executor, appsDir string) (*models.ExecResult, error) {
 	if err := WriteEnvFile(appsDir, app.Name, app.EnvVars); err != nil {
 		log.Printf("[warn] DeployApp: failed to write .env for %s: %v", app.Name, err)
 	}
-	return exec.RunScript("deploy_next_app.sh",
+	return exec.RunScriptEnv("deploy_app.sh", AppScriptEnv(app),
 		app.Name, app.RepoURL, app.Branch,
 		fmt.Sprintf("%d", app.Port), "restart", fmt.Sprintf("%d", app.MaxMemory))
 }

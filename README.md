@@ -135,7 +135,6 @@ panel/
 │   ├── setup_panel.sh             One-shot server setup
 │   ├── setup_app.sh               Manual app setup (install, build, PM2 start)
 │   ├── update_panel.sh            Panel self-update script
-│   ├── deploy_next_app.sh         Next.js app deployment
 │   ├── install_nginx.sh           NGINX installation
 │   ├── install_postgres.sh        PostgreSQL installation
 │   ├── install_redis.sh           Redis installation

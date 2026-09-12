@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"panel-backend/internal/models"
 )
 
 func TestWriteEnvFile_CreatesFile(t *testing.T) {
@@ -63,5 +65,25 @@ func TestWriteEnvFile_QuotesSpecialChars(t *testing.T) {
 	content, _ := os.ReadFile(filepath.Join(dir, "app", ".env"))
 	if !strings.Contains(string(content), `"`) {
 		t.Errorf("Expected value with spaces to be quoted, got: %s", content)
+	}
+}
+
+func TestAppScriptEnv(t *testing.T) {
+	app := &models.App{
+		AppType: "vite", RootDir: "/web", OutputDir: "build",
+		BuildCmd: "npm run build", StartCmd: "node s.js", InstallCmd: "pnpm i",
+	}
+	got := AppScriptEnv(app)
+	want := map[string]string{
+		"APP_TYPE": "vite", "ROOT_DIR": "/web", "OUTPUT_DIR": "build",
+		"BUILD_CMD": "npm run build", "START_CMD": "node s.js", "INSTALL_CMD": "pnpm i",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d keys, want %d: %v", len(got), len(want), got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
 	}
 }

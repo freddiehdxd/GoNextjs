@@ -47,20 +47,26 @@ func truncateOutput(b []byte) []byte {
 
 // cronJob is a lightweight job record fetched by the scheduler.
 type cronJob struct {
-	ID        string
-	AppID     *string
-	AppName   string // resolved from DB join (empty if app_id IS NULL)
-	RepoURL   string
-	Branch    string
-	Port      int
-	MaxMemory int
-	EnvVars   map[string]string
-	Name      string
-	Schedule  string
-	Command   *string
-	Action    *string
+	ID         string
+	AppID      *string
+	AppName    string // resolved from DB join (empty if app_id IS NULL)
+	RepoURL    string
+	Branch     string
+	Port       int
+	MaxMemory  int
+	EnvVars    map[string]string
+	AppType    string
+	RootDir    string
+	OutputDir  string
+	BuildCmd   string
+	StartCmd   string
+	InstallCmd string
+	Name       string
+	Schedule   string
+	Command    *string
+	Action     *string
 	MaxRuntime int
-	NextRunAt time.Time
+	NextRunAt  time.Time
 }
 
 // CronScheduler runs cron jobs on a 60-second tick.
@@ -73,7 +79,7 @@ type CronScheduler struct {
 	mu        sync.Mutex
 	inFlight  map[string]struct{} // job ID → in-flight sentinel
 	skipCount map[string]int      // job ID → consecutive pool-full skip count
-	pool      chan struct{}        // semaphore limiting concurrent workers
+	pool      chan struct{}       // semaphore limiting concurrent workers
 
 	cancel context.CancelFunc
 }
@@ -178,6 +184,12 @@ func (s *CronScheduler) tick(ctx context.Context) {
             COALESCE(a.port,0)         AS port,
             COALESCE(a.max_memory,512) AS max_memory,
             COALESCE(a.env_vars,'{}')  AS env_vars,
+            COALESCE(a.app_type,'next')    AS app_type,
+            COALESCE(a.root_dir,'/')       AS root_dir,
+            COALESCE(a.output_dir,'dist')  AS output_dir,
+            COALESCE(a.build_cmd,'')       AS build_cmd,
+            COALESCE(a.start_cmd,'')       AS start_cmd,
+            COALESCE(a.install_cmd,'')     AS install_cmd,
             j.name, j.schedule, j.command, j.action, j.max_runtime, j.next_run_at
         FROM cron_jobs j
         LEFT JOIN apps a ON a.id = j.app_id
@@ -196,6 +208,7 @@ func (s *CronScheduler) tick(ctx context.Context) {
 		if err := rows.Scan(
 			&j.ID, &j.AppID,
 			&j.AppName, &j.RepoURL, &j.Branch, &j.Port, &j.MaxMemory, &envJSON,
+			&j.AppType, &j.RootDir, &j.OutputDir, &j.BuildCmd, &j.StartCmd, &j.InstallCmd,
 			&j.Name, &j.Schedule, &j.Command, &j.Action, &j.MaxRuntime, &j.NextRunAt,
 		); err != nil {
 			log.Printf("cron: scan job: %v", err)
@@ -387,12 +400,18 @@ func (s *CronScheduler) runAction(ctx context.Context, job cronJob) (string, int
 
 	case "deploy":
 		app := &models.App{
-			Name:      job.AppName,
-			RepoURL:   job.RepoURL,
-			Branch:    job.Branch,
-			Port:      job.Port,
-			MaxMemory: job.MaxMemory,
-			EnvVars:   job.EnvVars,
+			Name:       job.AppName,
+			RepoURL:    job.RepoURL,
+			Branch:     job.Branch,
+			Port:       job.Port,
+			MaxMemory:  job.MaxMemory,
+			EnvVars:    job.EnvVars,
+			AppType:    job.AppType,
+			RootDir:    job.RootDir,
+			OutputDir:  job.OutputDir,
+			BuildCmd:   job.BuildCmd,
+			StartCmd:   job.StartCmd,
+			InstallCmd: job.InstallCmd,
 		}
 		result, err := DeployApp(app, s.exec, s.appsDir)
 		if err != nil {
@@ -466,6 +485,12 @@ func (s *CronScheduler) fetchJob(ctx context.Context, jobID string) (cronJob, er
             COALESCE(a.port,0)         AS port,
             COALESCE(a.max_memory,512) AS max_memory,
             COALESCE(a.env_vars,'{}')  AS env_vars,
+            COALESCE(a.app_type,'next')    AS app_type,
+            COALESCE(a.root_dir,'/')       AS root_dir,
+            COALESCE(a.output_dir,'dist')  AS output_dir,
+            COALESCE(a.build_cmd,'')       AS build_cmd,
+            COALESCE(a.start_cmd,'')       AS start_cmd,
+            COALESCE(a.install_cmd,'')     AS install_cmd,
             j.name, j.schedule, j.command, j.action, j.max_runtime, j.next_run_at
         FROM cron_jobs j
         LEFT JOIN apps a ON a.id = j.app_id
@@ -473,6 +498,7 @@ func (s *CronScheduler) fetchJob(ctx context.Context, jobID string) (cronJob, er
     `, jobID).Scan(
 		&j.ID, &j.AppID,
 		&j.AppName, &j.RepoURL, &j.Branch, &j.Port, &j.MaxMemory, &envJSON,
+		&j.AppType, &j.RootDir, &j.OutputDir, &j.BuildCmd, &j.StartCmd, &j.InstallCmd,
 		&j.Name, &j.Schedule, &j.Command, &j.Action, &j.MaxRuntime, &j.NextRunAt,
 	)
 	if err != nil {

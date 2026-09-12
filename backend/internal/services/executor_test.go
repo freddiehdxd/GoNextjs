@@ -105,7 +105,7 @@ func TestAllowedScripts(t *testing.T) {
 		"install_nginx.sh",
 		"install_postgres.sh",
 		"install_redis.sh",
-		"deploy_next_app.sh",
+		"deploy_app.sh",
 		"setup_app.sh",
 		"create_ssl.sh",
 	}
@@ -122,6 +122,7 @@ func TestAllowedScripts(t *testing.T) {
 		"../../etc/cron.d/evil.sh",
 		"",
 		"../deploy_next_app.sh",
+		"deploy_next_app.sh",
 	}
 	for _, script := range dangerous {
 		if allowedScripts[script] {

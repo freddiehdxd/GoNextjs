@@ -916,14 +916,7 @@ func parseEnvFile(path string) (map[string]string, error) {
 
 // appEnvFromApp returns env vars to pass to deploy scripts for a given app.
 func appEnvFromApp(app *models.App) map[string]string {
-	return map[string]string{
-		"APP_TYPE":    app.AppType,
-		"ROOT_DIR":    app.RootDir,
-		"OUTPUT_DIR":  app.OutputDir,
-		"BUILD_CMD":   app.BuildCmd,
-		"START_CMD":   app.StartCmd,
-		"INSTALL_CMD": app.InstallCmd,
-	}
+	return services.AppScriptEnv(app)
 }
 
 // readPanelMeta reads the .panel_meta file written by deploy scripts.
