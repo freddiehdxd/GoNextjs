@@ -71,7 +71,7 @@ export default function SSLPage() {
 
       {/* Success banner */}
       {success && (
-        <div className="mb-6 flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/8 px-5 py-4 animate-slide-up">
+        <div className="mb-6 flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-5 py-4 animate-slide-up">
           <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />
           <p className="text-emerald-400 text-sm font-medium">{success}</p>
           <button onClick={() => setSuccess('')} className="ml-auto text-emerald-600 hover:text-emerald-400 text-xs">Dismiss</button>
@@ -197,7 +197,7 @@ export default function SSLPage() {
             </div>
 
             {error && (
-              <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400">{error}</div>
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
             )}
 
             <div className="flex gap-3 justify-end">
@@ -229,7 +229,7 @@ export default function SSLPage() {
             </div>
 
             {error && (
-              <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400">{error}</div>
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
             )}
 
             <div className="flex gap-3 justify-end">

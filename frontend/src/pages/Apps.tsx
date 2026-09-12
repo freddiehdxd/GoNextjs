@@ -400,7 +400,7 @@ export default function AppsPage() {
 
                   <div className="flex gap-2 pt-1">
                     <button
-                      onClick={() => { if (confirm(`Delete ${app.name}? This removes it from PM2 but keeps files.`)) doAction(app.name, 'delete'); }}
+                      onClick={() => { if (confirm(`Delete ${app.name}? This stops the PM2 process, removes its NGINX configs and deletes /var/www/apps/${app.name}.`)) doAction(app.name, 'delete'); }}
                       className="btn-danger" disabled={!!acting}
                     >
                       <Trash2 size={13} /> Delete App
@@ -435,7 +435,7 @@ export default function AppsPage() {
                     className={`flex flex-col items-center gap-2 rounded-xl border p-3.5 text-center transition-all duration-200
                       ${deployType === t.id
                         ? 'border-violet-500/50 text-white'
-                        : 'border-white/8 text-gray-500 hover:border-white/15 hover:text-gray-300'}`}
+                        : 'border-white/10 text-gray-500 hover:border-white/15 hover:text-gray-300'}`}
                     style={deployType === t.id
                       ? { background: `${t.color}0e`, borderColor: `${t.color}50` }
                       : { background: 'rgba(255,255,255,0.02)' }}
@@ -538,7 +538,7 @@ export default function AppsPage() {
 
             {/* Advanced — Custom commands */}
             {(form.app_type === 'custom' || showAdvanced) && (
-              <div className="rounded-xl border border-white/8 bg-white/[0.01] p-4 space-y-3">
+              <div className="rounded-xl border border-white/10 bg-white/[0.01] p-4 space-y-3">
                 <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Advanced / Custom Commands</p>
                 <div>
                   <label className="label">Build Command</label>
@@ -610,7 +610,7 @@ export default function AppsPage() {
             </div>
 
             {error && (
-              <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400">{error}</div>
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
             )}
 
             <div className="flex gap-3 justify-end pt-1">

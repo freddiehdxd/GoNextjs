@@ -393,7 +393,7 @@ export default function DatabasesPage() {
               <p className="text-xs text-gray-500 mt-0.5">Save this connection string now -- the password will not be shown again.</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3 font-mono text-xs text-gray-300">
+          <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 font-mono text-xs text-gray-300">
             <span className="flex-1 break-all">{newConn}</span>
             <CopyButton text={newConn} />
           </div>
@@ -722,7 +722,7 @@ export default function DatabasesPage() {
       {restoreTarget && (
         <Modal title={`Restore "${restoreTarget}"`} onClose={() => { setRestoreTarget(null); setRestoreError(''); }}>
           <div className="space-y-4">
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-400">
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
               This will execute the SQL file against the database. Existing data may be overwritten or duplicated. Consider downloading a backup first.
             </div>
             <div>
@@ -748,7 +748,7 @@ export default function DatabasesPage() {
               </div>
             )}
             {restoreError && (
-              <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400">
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                 <p className="font-semibold mb-1">Restore failed</p>
                 <pre className="whitespace-pre-wrap text-xs text-red-400/80 font-mono max-h-48 overflow-auto">{restoreError}</pre>
               </div>
@@ -777,11 +777,11 @@ export default function DatabasesPage() {
                 value={form.user}
                 onChange={(e) => setForm({ ...form, user: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') })} />
             </div>
-            <div className="rounded-xl border border-white/8 bg-white/[0.02] px-4 py-3 text-xs text-gray-500">
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 text-xs text-gray-500">
               A strong random password will be generated automatically.
             </div>
             {error && (
-              <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400">{error}</div>
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
             )}
             <div className="flex gap-3 justify-end">
               <button className="btn-ghost" onClick={() => { setShowNew(false); setError(''); }}>Cancel</button>

@@ -35,6 +35,8 @@ export default function AppDetail() {
   const navigate = useNavigate();
   const [app, setApp] = useState<App | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pollError, setPollError] = useState('');
+  const loadedOnce = useRef(false);
   const [tab, setTab] = useState<Tab>('overview');
   const [acting, setActing] = useState<string | null>(null);
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
@@ -50,19 +52,26 @@ export default function AppDetail() {
     const res = await api.get<App>(`/apps/${name}`);
     if (res.success && res.data) {
       setApp(res.data);
-    } else {
+      setPollError('');
+      loadedOnce.current = true;
+    } else if (!loadedOnce.current || /not found/i.test(res.error ?? '')) {
       setApp(null);
+    } else {
+      // Transient failure (network blip, rate limit): keep the last good app.
+      setPollError(res.error ?? 'Refresh failed');
     }
     setLoading(false);
   }, [name]);
 
   useEffect(() => { fetchApp(); }, [fetchApp]);
 
+  const appId = app?.id;
+
   const fetchCronJobs = useCallback(async () => {
-    if (!app) return;
-    const res = await api.get<CronJob[]>(`/cron/jobs?app_id=${app.id}`);
+    if (!appId) return;
+    const res = await api.get<CronJob[]>(`/cron/jobs?app_id=${appId}`);
     if (res.success && res.data) setCronJobs(res.data);
-  }, [app]);
+  }, [appId]);
 
   const fetchCronRuns = useCallback(async (jobId: string) => {
     const res = await api.get<CronRun[]>(`/cron/jobs/${jobId}/runs`);
@@ -70,14 +79,14 @@ export default function AppDetail() {
   }, []);
 
   useEffect(() => {
-    if (tab === 'cron' && app) fetchCronJobs();
-  }, [tab, app, fetchCronJobs]);
+    if (tab === 'cron' && appId) fetchCronJobs();
+  }, [tab, appId, fetchCronJobs]);
 
   useEffect(() => {
-    if (tab !== 'cron' || !app) return;
+    if (tab !== 'cron' || !appId) return;
     const iv = setInterval(fetchCronJobs, 30000);
     return () => clearInterval(iv);
-  }, [tab, app, fetchCronJobs]);
+  }, [tab, appId, fetchCronJobs]);
 
   useEffect(() => {
     if (!expandedCronJob || tab !== 'cron') return;
@@ -132,6 +141,12 @@ export default function AppDetail() {
 
   return (
     <Shell>
+      {pollError && (
+        <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
+          Live data may be stale: {pollError}
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-6">
         <Link to="/apps" className="inline-flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-400 transition-colors mb-4">
@@ -861,8 +876,8 @@ function DeploymentsTab({ app, onAction, acting, onRefresh }: {
             {uploadMsg && (
               <div className={`mt-3 rounded-xl px-3 py-2 text-xs flex items-center gap-2 animate-slide-up ${
                 uploadMsg.includes('failed')
-                  ? 'bg-red-500/8 border border-red-500/20 text-red-400'
-                  : 'bg-emerald-500/8 border border-emerald-500/20 text-emerald-400'
+                  ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                  : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
               }`}>
                 {uploadMsg.includes('failed') ? <FolderArchive size={12} /> : <Check size={12} />}
                 {uploadMsg}

@@ -97,7 +97,7 @@ export default function AuditLog() {
               className={`px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
                 method === m
                   ? 'bg-violet-500/10 text-violet-400 border-violet-500/30'
-                  : 'text-gray-500 border-white/8 hover:border-white/15 hover:text-gray-300'
+                  : 'text-gray-500 border-white/10 hover:border-white/15 hover:text-gray-300'
               }`}
             >
               {m || 'All'}

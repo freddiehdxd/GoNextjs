@@ -122,12 +122,12 @@ export default function ServicesPage() {
 
       {/* Notifications */}
       {success && (
-        <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/8 px-4 py-3 text-sm text-emerald-400 flex items-center gap-2 animate-slide-up">
+        <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400 flex items-center gap-2 animate-slide-up">
           <CheckCircle2 size={14} /> {success}
         </div>
       )}
       {error && (
-        <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400 flex items-center gap-2 animate-slide-up">
+        <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400 flex items-center gap-2 animate-slide-up">
           <AlertCircle size={14} /> {error}
         </div>
       )}

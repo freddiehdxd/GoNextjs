@@ -40,6 +40,13 @@ export default function Settings() {
   const [showCommits, setShowCommits] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
+  // Refs mirror status/log count so the stream-closed branches below read
+  // live values instead of the closure captured when applyUpdate started.
+  const statusRef = useRef<UpdateStatus>('idle');
+  const logCountRef = useRef(0);
+  useEffect(() => { statusRef.current = status; }, [status]);
+  useEffect(() => { logCountRef.current = logs.length; }, [logs]);
+
   // Auto-scroll log to bottom
   useEffect(() => {
     if (logRef.current) {
@@ -71,6 +78,7 @@ export default function Settings() {
 
   async function applyUpdate() {
     setStatus('updating');
+    statusRef.current = 'updating';
     setLogs([]);
     setShowLog(true);
     setError('');
@@ -151,7 +159,7 @@ export default function Settings() {
 
       // If we get here without a complete/error event, connection was likely
       // closed by PM2 restart — which means the update succeeded
-      if (status === 'updating') {
+      if (statusRef.current === 'updating') {
         setLogs(prev => [...prev, '', 'Connection closed — backend is restarting...']);
         setStatus('success');
         // Wait for the new backend to come up, then re-check
@@ -161,7 +169,7 @@ export default function Settings() {
       }
     } catch (err) {
       // Connection error likely means PM2 restarted the process — that's success
-      if (status === 'updating' && logs.length > 3) {
+      if (statusRef.current === 'updating' && logCountRef.current > 3) {
         setLogs(prev => [...prev, '', 'Backend restarted — update applied!']);
         setStatus('success');
         setTimeout(() => checkForUpdates(), 5000);
@@ -509,15 +517,13 @@ function AlertsCard() {
           <label className="label">Events</label>
           <div className="flex flex-wrap gap-2">
             {[
-              { id: 'app_crash', label: 'App Crash', color: 'red' },
-              { id: 'disk_full', label: 'Disk Full', color: 'amber' },
-              { id: 'high_memory', label: 'High Memory', color: 'orange' },
-            ].map(({ id, label, color }) => (
+              { id: 'app_crash',   label: 'App Crash',   cls: 'bg-red-500/10 text-red-400 border-red-500/20' },
+              { id: 'disk_full',   label: 'Disk Full',   cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' },
+              { id: 'high_memory', label: 'High Memory', cls: 'bg-orange-500/10 text-orange-400 border-orange-500/20' },
+            ].map(({ id, label, cls }) => (
               <button key={id} onClick={() => toggleEvent(id)}
                 className={`badge cursor-pointer transition-all ${
-                  settings.events.includes(id)
-                    ? `bg-${color}-500/10 text-${color}-400 border-${color}-500/20`
-                    : 'bg-white/5 text-gray-500 border-white/10'
+                  settings.events.includes(id) ? cls : 'bg-white/5 text-gray-500 border-white/10'
                 }`}>
                 <Shield size={10} /> {label}
               </button>

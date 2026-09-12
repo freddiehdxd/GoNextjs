@@ -151,7 +151,7 @@ export default function DomainsPage() {
             </div>
 
             {error && (
-              <div className="rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-sm text-red-400">{error}</div>
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
             )}
 
             <div className="flex gap-3 justify-end">
