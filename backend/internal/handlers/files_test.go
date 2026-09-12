@@ -1,10 +1,21 @@
 package handlers
 
 import (
+	"os"
 	"path/filepath"
-	"strings"
+	"runtime"
 	"testing"
 )
+
+// windowsPathExpectation: filepath.Base only splits on backslash on Windows.
+// On Linux the whole string is one segment containing ':' and '\', which the
+// filename regex rejects.
+func windowsPathExpectation() string {
+	if runtime.GOOS == "windows" {
+		return "file.txt"
+	}
+	return ""
+}
 
 func TestSanitizeFilename(t *testing.T) {
 	tests := []struct {
@@ -17,7 +28,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{"valid with hyphens", "my-file.txt", "my-file.txt"},
 		{"valid with dots", "file.tar.gz", "file.tar.gz"},
 		{"strip path components", "/etc/passwd", "passwd"},
-		{"strip windows path", "C:\\Users\\file.txt", "file.txt"},
+		{"strip windows path", "C:\\Users\\file.txt", windowsPathExpectation()},
 		{"strip relative path", "../../../etc/passwd", "passwd"},
 		{"reject dotfile", ".env", ""},
 		{"reject hidden file", ".htaccess", ""},
@@ -37,10 +48,14 @@ func TestSanitizeFilename(t *testing.T) {
 }
 
 func TestPathTraversalGuard(t *testing.T) {
-	// Simulate the path traversal guard used in file handlers
-	appsDir := "/var/www/apps"
-	appName := "myapp"
-	appDir := filepath.Join(appsDir, appName)
+	root := t.TempDir()
+	appDir := filepath.Join(root, "myapp")
+	if err := os.MkdirAll(filepath.Join(appDir, "src", "components"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "myapp2"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name    string
@@ -50,23 +65,44 @@ func TestPathTraversalGuard(t *testing.T) {
 		{"valid root", "", true},
 		{"valid subdir", "src", true},
 		{"valid nested", "src/components/App.tsx", true},
+		{"valid missing file", "src/new.txt", true},
+		{"double dot in name", "..hidden", true},
+		{"encoded traversal is a plain name", "..%2F..%2Fetc%2Fpasswd", true},
 		{"traversal up", "../", false},
 		{"traversal to other app", "../otherapp/secrets", false},
 		{"traversal to etc", "../../../etc/passwd", false},
-		{"traversal encoded", "..%2F..%2Fetc%2Fpasswd", true}, // not decoded at filesystem level, safe
 		{"absolute path", "/etc/passwd", false},
-		{"double dot in name", "..hidden", true}, // valid if it resolves within appDir
+		{"sibling prefix", "../myapp2/.env", false},
+		{"sibling prefix nested", "src/../../myapp2/.env", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			targetPath := filepath.Join(appDir, tt.subPath)
-			resolved, err := filepath.Abs(targetPath)
-			safe := err == nil && strings.HasPrefix(resolved, filepath.Clean(appDir))
-			if safe != tt.safe {
-				t.Errorf("Path %q: resolved=%q, safe=%v, want safe=%v", tt.subPath, resolved, safe, tt.safe)
+			got, err := resolveAppPath(appDir, tt.subPath)
+			if (err == nil) != tt.safe {
+				t.Fatalf("resolveAppPath(%q) = %q, %v; want safe=%v", tt.subPath, got, err, tt.safe)
+			}
+			if err == nil && got != filepath.Clean(filepath.Join(appDir, tt.subPath)) {
+				t.Errorf("resolved %q, want %q", got, filepath.Clean(filepath.Join(appDir, tt.subPath)))
 			}
 		})
 	}
+
+	t.Run("symlink inside app pointing outside is rejected", func(t *testing.T) {
+		outside := filepath.Join(root, "outside")
+		if err := os.MkdirAll(outside, 0755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(appDir, "link")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Skipf("symlinks not permitted: %v", err)
+		}
+		if _, err := resolveAppPath(appDir, "link/secret"); err == nil {
+			t.Error("expected symlink escape to be rejected")
+		}
+		if _, err := resolveAppPath(appDir, "link"); err == nil {
+			t.Error("expected symlink itself to be rejected")
+		}
+	})
 }
 
 func TestBlockedExtensions(t *testing.T) {

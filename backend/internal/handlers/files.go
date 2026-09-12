@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +32,66 @@ var (
 	filenameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._\- ]*$`)
 )
 
+var errPathEscape = errors.New("path escapes app directory")
+
+// resolveAppPath returns the cleaned absolute path of sub inside appDir, or
+// errPathEscape if sub would leave appDir via "..", an absolute path, or a
+// symlink. The deepest existing ancestor of the target is resolved with
+// EvalSymlinks so a symlink planted inside the app directory cannot point
+// outside it. appDir itself may not exist yet (uploads create it).
+func resolveAppPath(appDir, sub string) (string, error) {
+	base, err := filepath.Abs(appDir)
+	if err != nil {
+		return "", err
+	}
+	if filepath.IsAbs(sub) || strings.HasPrefix(sub, "/") || strings.HasPrefix(sub, `\`) {
+		return "", errPathEscape
+	}
+	target := filepath.Clean(filepath.Join(base, sub))
+	if !insideDir(base, target) {
+		return "", errPathEscape
+	}
+
+	// Walk up to the deepest existing ancestor of target.
+	existing := target
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			break
+		}
+		existing = parent
+	}
+	// Only check symlinks for the part at or below base; ancestors above
+	// base are outside our control and irrelevant.
+	if !insideDir(base, existing) {
+		return target, nil
+	}
+	resolvedBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		resolvedBase = base // base does not exist yet
+	}
+	resolvedExisting, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	if !insideDir(resolvedBase, resolvedExisting) {
+		return "", errPathEscape
+	}
+	return target, nil
+}
+
+// insideDir reports whether p equals dir or lies beneath it (both cleaned).
+func insideDir(dir, p string) bool {
+	rel, err := filepath.Rel(dir, p)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
 // FilesHandler handles file browsing and editing routes
 type FilesHandler struct {
 	cfg *config.Config
@@ -51,11 +112,8 @@ func (h *FilesHandler) List(w http.ResponseWriter, r *http.Request) {
 	subPath := r.URL.Query().Get("path")
 
 	appDir := filepath.Join(h.cfg.AppsDir, appName)
-	targetDir := filepath.Join(appDir, subPath)
-
-	// Path traversal guard
-	resolved, err := filepath.Abs(targetDir)
-	if err != nil || !strings.HasPrefix(resolved, filepath.Clean(appDir)) {
+	resolved, err := resolveAppPath(appDir, subPath)
+	if err != nil {
 		Error(w, http.StatusBadRequest, "Invalid path")
 		return
 	}
@@ -115,11 +173,8 @@ func (h *FilesHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	appDir := filepath.Join(h.cfg.AppsDir, appName)
-	filePath := filepath.Join(appDir, subPath)
-
-	// Path traversal guard
-	resolved, err := filepath.Abs(filePath)
-	if err != nil || !strings.HasPrefix(resolved, filepath.Clean(appDir)) {
+	resolved, err := resolveAppPath(appDir, subPath)
+	if err != nil {
 		Error(w, http.StatusBadRequest, "Invalid path")
 		return
 	}
@@ -176,11 +231,8 @@ func (h *FilesHandler) SaveContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	appDir := filepath.Join(h.cfg.AppsDir, appName)
-	filePath := filepath.Join(appDir, subPath)
-
-	// Path traversal guard
-	resolved, err := filepath.Abs(filePath)
-	if err != nil || !strings.HasPrefix(resolved, filepath.Clean(appDir)) {
+	resolved, err := resolveAppPath(appDir, subPath)
+	if err != nil {
 		Error(w, http.StatusBadRequest, "Invalid path")
 		return
 	}
@@ -209,11 +261,7 @@ func (h *FilesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	subPath := r.URL.Query().Get("path")
 
 	appDir := filepath.Join(h.cfg.AppsDir, appName)
-	targetDir := filepath.Join(appDir, subPath)
-
-	// Path traversal guard
-	resolved, err := filepath.Abs(targetDir)
-	if err != nil || !strings.HasPrefix(resolved, filepath.Clean(appDir)) {
+	if _, err := resolveAppPath(appDir, subPath); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid path")
 		return
 	}
@@ -251,7 +299,10 @@ func (h *FilesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create destination
-		destPath := filepath.Join(resolved, name)
+		destPath, err := resolveAppPath(appDir, filepath.Join(subPath, name))
+		if err != nil {
+			continue
+		}
 		os.MkdirAll(filepath.Dir(destPath), 0755)
 
 		dst, err := os.Create(destPath)
@@ -285,8 +336,10 @@ func sanitizeFilename(name string) string {
 		return r
 	}, name)
 
-	// Strip leading dots
-	name = strings.TrimLeft(name, ".")
+	// Reject dotfiles/hidden files outright
+	if strings.HasPrefix(name, ".") {
+		return ""
+	}
 
 	// Enforce max length
 	if len(name) > maxFilenameLength {
