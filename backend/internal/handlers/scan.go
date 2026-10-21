@@ -118,20 +118,58 @@ func readGitInfo(dir string) *GitInfo {
 	return info
 }
 
-var ecosystemPortRe = regexp.MustCompile(`PORT:\s*['"]?(\d+)`)
+var (
+	// ecosystemPortRe matches a PORT entry in an ecosystem env block; \b keeps
+	// SMTP_PORT and friends from matching.
+	ecosystemPortRe = regexp.MustCompile(`\bPORT['"]?:\s*['"]?(\d+)`)
+	// cliPortRe matches a port passed on a command line: -p 3018, --port 3018, --port=3018.
+	cliPortRe = regexp.MustCompile(`(?:^|[\s"'])(?:-p|--port)(?:=|\s+)(\d{2,5})\b`)
+	// envAssignPortRe matches an inline PORT=3018 assignment.
+	envAssignPortRe = regexp.MustCompile(`\bPORT=['"]?(\d{2,5})\b`)
+)
 
-// parseEcosystemPort extracts the PORT value from ecosystem.config.js content.
+// parseEcosystemPort extracts the port from ecosystem.config.js content: a
+// PORT entry in env first, then a -p/--port flag or PORT= assignment in the
+// script or args strings.
 func parseEcosystemPort(content string) int {
-	m := ecosystemPortRe.FindStringSubmatch(content)
-	if m == nil {
-		return 0
-	}
-	n, _ := strconv.Atoi(m[1])
-	return n
+	return firstPort(content, ecosystemPortRe, cliPortRe, envAssignPortRe)
 }
 
-// detectPort returns the port a directory appears to use: ecosystem.config.js
-// first, then PORT= in .env, else 0.
+// parseCommandPort extracts the port from a shell command such as a
+// package.json start script: a -p/--port flag first, then PORT=.
+func parseCommandPort(command string) int {
+	return firstPort(command, cliPortRe, envAssignPortRe)
+}
+
+func firstPort(s string, patterns ...*regexp.Regexp) int {
+	for _, re := range patterns {
+		if m := re.FindStringSubmatch(s); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// startScriptPort returns the port named in package.json's start script, else 0.
+func startScriptPort(dir string) int {
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return 0
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(data, &pkg) != nil {
+		return 0
+	}
+	return parseCommandPort(pkg.Scripts["start"])
+}
+
+// detectPort returns the port a directory appears to use from its files:
+// ecosystem.config.js first, then PORT= in .env, then the package.json start
+// script, else 0. A running PM2 process overrides this; see pm2ForDir.
 func detectPort(dir string) int {
 	if data, err := os.ReadFile(filepath.Join(dir, "ecosystem.config.js")); err == nil {
 		if p := parseEcosystemPort(string(data)); p > 0 {
@@ -143,7 +181,7 @@ func detectPort(dir string) int {
 			return n
 		}
 	}
-	return 0
+	return startScriptPort(dir)
 }
 
 // findDomainsFor returns the names of NGINX site files in availDir that proxy
@@ -245,6 +283,7 @@ type DetectedType struct {
 }
 
 type PM2Info struct {
+	Name   string `json:"name"`
 	Status string `json:"status"`
 	Port   int    `json:"port"`
 }
@@ -290,15 +329,48 @@ func NewScanHandler(db *services.DB, pm2 *services.PM2, port *services.PortAlloc
 	return &ScanHandler{db: db, pm2: pm2, port: port, cfg: cfg}
 }
 
-// pm2StatusMap returns name → PM2 status. Empty map when PM2 is unavailable.
-func (h *ScanHandler) pm2StatusMap() map[string]string {
-	m := make(map[string]string)
+// pm2Processes returns the PM2 process list, or nil when PM2 is unavailable.
+func (h *ScanHandler) pm2Processes() []models.Pm2Process {
 	list, err := h.pm2.List()
 	if err != nil {
-		return m
+		return nil
 	}
-	for _, p := range list {
-		m[p.Name] = p.Status
+	return list
+}
+
+// pm2Match describes the PM2 process serving a directory.
+type pm2Match struct {
+	name   string
+	status string
+	port   int // port the process listens on; 0 when stopped or unknown
+}
+
+// pm2ForDir finds the PM2 process whose working directory is dir, or failing
+// that the one named after the directory, and the TCP port it is listening on.
+// A running process is the source of truth for the port: config files can pass
+// it in ways static detection does not understand, and the process may have
+// been started under a different name than the directory.
+func pm2ForDir(list []models.Pm2Process, dir, name string) *pm2Match {
+	clean := filepath.Clean(dir)
+	var match *models.Pm2Process
+	for i := range list {
+		p := &list[i]
+		if p.Cwd != "" && filepath.Clean(p.Cwd) == clean {
+			match = p
+			break
+		}
+		if match == nil && p.Name == name {
+			match = p
+		}
+	}
+	if match == nil {
+		return nil
+	}
+	m := &pm2Match{name: match.Name, status: match.Status}
+	if match.Status == "online" {
+		if ports := listeningPorts(match.Pid); len(ports) > 0 {
+			m.port = ports[0]
+		}
 	}
 	return m
 }
@@ -369,7 +441,11 @@ func (h *ScanHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pm2Status := h.pm2StatusMap()
+	pm2List := h.pm2Processes()
+	pm2Status := make(map[string]string, len(pm2List))
+	for _, p := range pm2List {
+		pm2Status[p.Name] = p.Status
+	}
 
 	result := ScanResult{
 		AppsDir:   h.cfg.AppsDir,
@@ -396,8 +472,11 @@ func (h *ScanHandler) Scan(w http.ResponseWriter, r *http.Request) {
 			u.Detected = DetectedType{AppType: meta.AppType, RootDir: meta.RootDir}
 		}
 		u.DetectedPort = detectPort(dir)
-		if status, ok := pm2Status[name]; ok {
-			u.PM2 = &PM2Info{Status: status, Port: u.DetectedPort}
+		if m := pm2ForDir(pm2List, dir, name); m != nil {
+			if m.port > 0 {
+				u.DetectedPort = m.port
+			}
+			u.PM2 = &PM2Info{Name: m.name, Status: m.status, Port: u.DetectedPort}
 		}
 		_, envErr := os.Stat(filepath.Join(dir, ".env"))
 		u.HasEnv = envErr == nil
@@ -540,6 +619,10 @@ func (h *ScanHandler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detectedPort := detectPort(dir)
+	pm2Proc := pm2ForDir(h.pm2Processes(), dir, body.Name)
+	if pm2Proc != nil && pm2Proc.port > 0 {
+		detectedPort = pm2Proc.port
+	}
 	port, err := choosePort(body.Port, detectedPort, used, h.cfg.PortStart, h.cfg.PortEnd)
 	if err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
@@ -587,8 +670,8 @@ func (h *ScanHandler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := importResponse{App: app}
-	if status, ok := h.pm2StatusMap()[body.Name]; ok && detectedPort != 0 && detectedPort != port {
-		resp.Warning = fmt.Sprintf("PM2 process (%s) is listening on %d but the app was registered on %d; run Setup to align them.", status, detectedPort, port)
+	if pm2Proc != nil && detectedPort != 0 && detectedPort != port {
+		resp.Warning = fmt.Sprintf("PM2 process %s (%s) is listening on %d but the app was registered on %d; run Setup to align them.", pm2Proc.name, pm2Proc.status, detectedPort, port)
 	}
 	SuccessCreated(w, resp)
 }
@@ -678,8 +761,11 @@ func (h *ScanHandler) DeleteDir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := h.pm2StatusMap()[name]; ok {
-		h.pm2.Action("delete", name) // best effort — a stray process with this exact name
+	for _, p := range h.pm2Processes() {
+		if p.Name == name {
+			h.pm2.Action("delete", name) // best effort — a stray process with this exact name
+			break
+		}
 	}
 
 	if err := os.RemoveAll(target); err != nil {

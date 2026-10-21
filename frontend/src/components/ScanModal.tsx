@@ -122,7 +122,11 @@ function UnmanagedRow({ dir, onChanged }: { dir: UnmanagedDir; onChanged: (warn?
               </span>
             )}
             {dir.pm2 && <StatusBadge status={dir.pm2.status} />}
-            {dir.pm2 && dir.pm2.port > 0 && <code className="text-[11px] text-gray-500 font-mono">:{dir.pm2.port}</code>}
+            {dir.pm2 && (dir.pm2.port > 0 || dir.pm2.name !== dir.name) && (
+              <code className="text-[11px] text-gray-500 font-mono">
+                {dir.pm2.name !== dir.name ? `pm2 ${dir.pm2.name}` : ''}{dir.pm2.port > 0 ? `:${dir.pm2.port}` : ''}
+              </code>
+            )}
             {!dir.pm2 && dir.detected_port > 0 && (
               <code className="text-[11px] text-gray-600 font-mono">port {dir.detected_port} (from disk)</code>
             )}

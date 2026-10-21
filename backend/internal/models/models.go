@@ -104,6 +104,8 @@ type Pm2Process struct {
 	CPU    float64 `json:"cpu"`
 	Memory int64   `json:"memory"`
 	Uptime int64   `json:"uptime"`
+	Pid    int     `json:"pid"`
+	Cwd    string  `json:"cwd"`
 }
 
 // Stats represents system statistics (current snapshot)

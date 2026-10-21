@@ -101,7 +101,7 @@ export interface UnmanagedDir {
   name: string; path: string; size_bytes: number; modified_at: string;
   valid_name: boolean; detected: DetectedType; detected_port: number;
   git: { repo_url: string; branch: string } | null;
-  pm2: { status: string; port: number } | null;
+  pm2: { name: string; status: string; port: number } | null;
   has_env: boolean; has_ecosystem: boolean; domains: string[];
 }
 export interface OrphanedApp { name: string; port: number; domains: string[]; pm2_status: string }

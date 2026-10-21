@@ -38,9 +38,11 @@ type pm2DumpEntry struct {
 type pm2RawProcess struct {
 	Name  string `json:"name"`
 	PmID  int    `json:"pm_id"`
+	Pid   int    `json:"pid"`
 	Pm2Env struct {
-		Status  string `json:"status"`
+		Status   string `json:"status"`
 		PmUptime int64  `json:"pm_uptime"`
+		PmCwd    string `json:"pm_cwd"`
 	} `json:"pm2_env"`
 	Monit struct {
 		CPU    float64 `json:"cpu"`
@@ -115,6 +117,7 @@ func (p *PM2) ListFromProc() ([]models.Pm2Process, error) {
 		}
 
 		proc.Status = "online"
+		proc.Pid = pid
 		processes = append(processes, proc)
 	}
 
@@ -151,6 +154,8 @@ func (p *PM2) List() ([]models.Pm2Process, error) {
 			CPU:    r.Monit.CPU,
 			Memory: r.Monit.Memory,
 			Uptime: r.Pm2Env.PmUptime,
+			Pid:    r.Pid,
+			Cwd:    r.Pm2Env.PmCwd,
 		})
 	}
 

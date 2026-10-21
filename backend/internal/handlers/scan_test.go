@@ -133,6 +133,13 @@ func TestParseEcosystemPort(t *testing.T) {
 		{"env: {\n      NODE_ENV: 'production',\n      PORT:     '3004',\n    },", 3004},
 		{`PORT: "3010"`, 3010},
 		{"PORT: 3011,", 3011},
+		{`'PORT': '3012',`, 3012},
+		{"script: \"./node_modules/next/dist/bin/next\",\n      args: \"start -p 3018\",", 3018},
+		{`args: 'start --port 3020'`, 3020},
+		{`args: "--port=3021"`, 3021},
+		{`args: "-c 'PORT=3022 node server.js'"`, 3022},
+		{"env: { PORT: '3004' },\n args: 'start -p 3018'", 3004},
+		{"env: { SMTP_PORT: '587' }", 0},
 		{"name: 'x'", 0},
 		{"", 0},
 	}
@@ -157,6 +164,13 @@ func TestDetectPort(t *testing.T) {
 		writeFile(t, filepath.Join(dir, ".env"), "FOO=bar\nPORT=\"3020\"\n")
 		if got := detectPort(dir); got != 3020 {
 			t.Errorf("got %d, want 3020", got)
+		}
+	})
+	t.Run("start script fallback", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "package.json"), `{"scripts":{"start":"next start -p 3018"}}`)
+		if got := detectPort(dir); got != 3018 {
+			t.Errorf("got %d, want 3018", got)
 		}
 	})
 	t.Run("nothing", func(t *testing.T) {
